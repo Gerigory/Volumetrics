@@ -7,7 +7,6 @@
         frequency = pow(2.0,float(i));
         amplitude = pow(persistence,float(i));
 		uv += iTime * 0.04;
-        sum += perlin(uv * frequency) * amplitude;
+        sum += perlin(uv * frequency, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler) * amplitude;
     }
-    
-    return 0.3 + 0.7*sum;
+	return sum;

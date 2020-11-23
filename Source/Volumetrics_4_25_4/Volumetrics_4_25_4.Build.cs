@@ -8,7 +8,15 @@ public class Volumetrics_4_25_4 : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore" });
+		PublicDependencyModuleNames.AddRange(new string[] 
+		{
+			"RHI",
+            "RenderCore",
+            "Core",
+            "CoreUObject", 
+			"Engine", 
+			"InputCore" 
+		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });
 

@@ -1,14 +1,22 @@
-float noise(int x,int y)
+float noise(int x,int y, float Coverage, int NoiseTexRes, Texture2D WhiteNoise, SamplerState WhiteNoiseSampler)
 {   
     float fx = float(x);
     float fy = float(y);
     
-    return 2.0 * frac(sin(dot(float2(fx, fy) ,float2(12.9898,78.233))) * 43758.5453) - 1.0;
+	return 2 * Texture2DSample(WhiteNoise, WhiteNoiseSampler, float2(fx, fy) / NoiseTexRes).r - Coverage;
 }
 
-float smoothNoise(int x,int y)
+float smoothNoise(int x,int y, float Coverage, int NoiseTexRes, Texture2D WhiteNoise, SamplerState WhiteNoiseSampler)
 {
-    return noise(x,y)/4.0+(noise(x+1,y)+noise(x-1,y)+noise(x,y+1)+noise(x,y-1))/8.0+(noise(x+1,y+1)+noise(x+1,y-1)+noise(x-1,y+1)+noise(x-1,y-1))/16.0;
+    return noise(x,y, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler)/4.0
+	+(noise(x+1,y, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler)
+	+noise(x-1,y, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler)
+	+noise(x,y+1, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler)
+	+noise(x,y-1, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler))/8.0
+	+(noise(x+1,y+1, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler)
+	+noise(x+1,y-1, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler)
+	+noise(x-1,y+1, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler)
+	+noise(x-1,y-1, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler))/16.0;
 }
 
 float COSInterpolation(float x,float y,float n)
@@ -19,15 +27,15 @@ float COSInterpolation(float x,float y,float n)
     
 }
 
-float perlin(float2 uv)
+float perlin(float2 uv, float Coverage, int NoiseTexRes, Texture2D WhiteNoise, SamplerState WhiteNoiseSampler)
 {
     int2 iuv = floor(uv);
     float2 fracuv = frac(uv);
     
-    float c00 = smoothNoise(iuv.x,iuv.y);
-    float c10 = smoothNoise(iuv.x+1,iuv.y);
-    float c01 = smoothNoise(iuv.x,iuv.y+1);
-    float c11 = smoothNoise(iuv.x+1,iuv.y+1);
+    float c00 = smoothNoise(iuv.x,iuv.y, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
+    float c10 = smoothNoise(iuv.x+1,iuv.y, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
+    float c01 = smoothNoise(iuv.x,iuv.y+1, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
+    float c11 = smoothNoise(iuv.x+1,iuv.y+1, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
     
    	float i1 = COSInterpolation(c00,c10,fracuv.x);
     float i2 = COSInterpolation(c01,c11,fracuv.x);
