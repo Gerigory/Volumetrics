@@ -1,0 +1,13 @@
+    float sum = 0.0;
+    float frequency =0.0;
+    float amplitude = 0.0;
+	const float persistence = 0.6;
+    for(int i=firstOctave; i < firstOctave + accumOctaves;i++)
+    {
+        frequency = pow(2.0,float(i));
+        amplitude = pow(persistence,float(i));
+		uv += iTime * 0.04;
+        sum += perlin(uv * frequency) * amplitude;
+    }
+    
+    return 0.3 + 0.7*sum;

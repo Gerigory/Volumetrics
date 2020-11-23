@@ -1,0 +1,76 @@
+float noise(int x,int y)
+{   
+    float fx = float(x);
+    float fy = float(y);
+    
+    return 2.0 * frac(sin(dot(float2(fx, fy) ,float2(12.9898,78.233))) * 43758.5453) - 1.0;
+}
+
+float smoothNoise(int x,int y)
+{
+    return noise(x,y)/4.0+(noise(x+1,y)+noise(x-1,y)+noise(x,y+1)+noise(x,y-1))/8.0+(noise(x+1,y+1)+noise(x+1,y-1)+noise(x-1,y+1)+noise(x-1,y-1))/16.0;
+}
+
+float COSInterpolation(float x,float y,float n)
+{
+    float r = n*3.1415926;
+    float f = (1.0-cos(r))*0.5;
+    return x*(1.0-f)+y*f;
+    
+}
+
+float perlin(float2 uv)
+{
+    int2 iuv = floor(uv);
+    float2 fracuv = frac(uv);
+    
+    float c00 = smoothNoise(iuv.x,iuv.y);
+    float c10 = smoothNoise(iuv.x+1,iuv.y);
+    float c01 = smoothNoise(iuv.x,iuv.y+1);
+    float c11 = smoothNoise(iuv.x+1,iuv.y+1);
+    
+   	float i1 = COSInterpolation(c00,c10,fracuv.x);
+    float i2 = COSInterpolation(c01,c11,fracuv.x);
+    
+    return COSInterpolation(i1,i2,fracuv.y);
+    
+}
+
+// Arbitrary random, can be replaced with a function of your choice
+float rand(float2 co)
+{
+    return frac(sin(dot(co.xy ,float2(12.9898,78.233))) * 43758.5453);
+}
+
+// Returns the point in a given cell
+float2 get_cell_point(float2 cell, int CellNum) 
+{
+	float2 cell_base = cell / CellNum;
+	float noise_x = rand(cell);
+    float noise_y = rand(cell.yx);
+    return cell_base + (0.5 + 1.5 * float2(noise_x, noise_y)) / CellNum;
+}
+
+// Performs worley noise by checking all adjacent cells
+// and comparing the distance to their points
+float worley(float2 coord, int CellNum)
+{
+    float2 cell = floor(coord * CellNum);
+    float dist = 10000.0;
+    
+    // Search in the surrounding 5x5 cell block
+    for (int x = 0; x < 5; x++) 
+	{ 
+        for (int y = 0; y < 5; y++) 
+		{
+        	float2 cell_point = get_cell_point(cell + float2(x-2, y-2), CellNum);
+            dist = min(dist, length(cell_point - coord));
+
+        }
+    }
+	
+	float2 invCellsNum = float2(1.0 / CellNum, 1.0 / CellNum);
+	dist /= length(invCellsNum);
+    dist = 1.0 - dist;
+    return dist;
+
