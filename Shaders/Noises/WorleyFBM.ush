@@ -3,7 +3,7 @@
     for (int i = firstOctave; i < firstOctave + accumOctaves; i++)
     {
         uv += iTime * 0.04;
+		factor = pow(2.0,float(i));
         value += worley(uv * factor, CellNum) / factor;
-        factor *= 2.0;
     }
-	return clamp(value * 0.6, 0.0, 1.0);
+	return clamp(value * saturateness, 0.0, 1.0);
