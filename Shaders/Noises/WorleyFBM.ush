@@ -2,8 +2,8 @@
     float factor = 1.0;
     for (int i = firstOctave; i < firstOctave + accumOctaves; i++)
     {
-        uv += iTime * 0.04;
+        uvw += iTime * 0.04;
 		factor = pow(2.0,float(i));
-        value += worley(uv * factor, CellNum) / factor;
+        value += worley(uvw * factor, CellNum) / factor;
     }
 	return clamp(value * saturateness, 0.0, 1.0);
