@@ -1,9 +1,9 @@
     float value = 0.0;
-    float factor = 1.0;
+    float frequency = pow(2, firstOctave);
     for (int i = firstOctave; i < firstOctave + accumOctaves; i++)
     {
         uvw += iTime * 0.04;
-		factor = pow(2.0,float(i));
-        value += worley(uvw * factor, CellNum) / factor;
+        value += worley(uvw * frequency, CellNum) / frequency;
+		frequency *= 2.0;
     }
 	return clamp(value * saturateness, 0.0, 1.0);
