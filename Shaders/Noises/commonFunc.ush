@@ -6,24 +6,25 @@ float rand(float2 co)
 
 float grad3D(float hash, float3 pos) 
 {
-    int h = int(1e4*hash) & 15;
-	float u = h<8 ? pos.x : pos.y,
- 		  v = h<4 ? pos.y : h==12||h==14 ? pos.x : pos.z;
-    return ((h&1) == 0 ? u : -u) + ((h&2) == 0 ? v : -v);
+    float angle = 6.283185 * hash + 4.0 * pos.z * hash;
+    return dot(float2(cos(angle), sin(angle)), pos.xy);
+
+    // int h = int(1e4*hash) & 15;
+	// float u = h<8 ? pos.x : pos.y,
+ 	// 	  v = h<4 ? pos.y : h==12||h==14 ? pos.x : pos.z;
+    // return ((h&1) == 0 ? u : -u) + ((h&2) == 0 ? v : -v);
 }
 
-float hash13(float3 pos, float Coverage, int NoiseTexRes, Texture2D WhiteNoise, SamplerState WhiteNoiseSampler)
+float hash13(float3 pos, int NoiseTexRes, Texture2D WhiteNoise, SamplerState WhiteNoiseSampler)
 {
     float2 uv = pos.xy + pos.z;
 	return Texture2DSample(WhiteNoise, WhiteNoiseSampler, uv / NoiseTexRes).r;
-    // return Texture2DSample(WhiteNoise, WhiteNoiseSampler, (uv + 0.5)/NoiseTexRes).x;
+
 }
 
 float fade(float t) 
 {
-    // return t*(6.0*t-15.0)+10.0;
     return t;
-    // return t*t*t*(t*(6.0*t-15.0)+10.0); 
 }
 
 float COSInterpolation(float x,float y,float n)
@@ -35,7 +36,7 @@ float COSInterpolation(float x,float y,float n)
     
 }
 
-float perlin(float3 uvw, float Coverage, int NoiseTexRes, Texture2D WhiteNoise, SamplerState WhiteNoiseSampler)
+float perlin(float3 uvw, float SliceNum, float Coverage, int NoiseTexRes, Texture2D WhiteNoise, SamplerState WhiteNoiseSampler)
 {
     float3 pi = floor(uvw); 
     float3 pf = uvw - pi;
@@ -43,29 +44,54 @@ float perlin(float3 uvw, float Coverage, int NoiseTexRes, Texture2D WhiteNoise, 
     float u = fade(pf.x);
     float v = fade(pf.y);
     float w = fade(pf.z);
+
+    // SliceNum = 1.0f;
+    float3 posOffsetArr[8] = 
+    {
+        float3(0, 0, 0),
+        float3(1.0, 0, 0),
+        float3(0, 1.0, 0),
+        float3(1.0, 1.0, 0),
+        float3(0, 0, 1.0 / SliceNum),
+        float3(1.0, 0, 1.0 / SliceNum),
+        float3(0, 1.0, 1.0 / SliceNum),
+        float3(1.0, 1.0, 1.0 / SliceNum),
+    };
+
+    float3 posNoOffsetArr[8] = 
+    {
+        float3(0.0, 0.0, 0.0),
+        float3(1.0, 0.0, 0.0),
+        float3(0.0, 1.0, 0.0),
+        float3(1.0, 1.0, 0.0),
+        float3(0.0, 0.0, 1.0),
+        float3(1.0, 0.0, 1.0),
+        float3(0.0, 1.0, 1.0),
+        float3(1.0, 1.0, 1.0),
+    };
     
     return  COSInterpolation( 
                 COSInterpolation( 
-                    COSInterpolation( 
-                        grad3D(hash13(pi + float3(0, 0, 0), Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - float3(0, 0, 0)),
-                        grad3D(hash13(pi + float3(1, 0, 0), Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - float3(1, 0, 0)), 
+                    COSInterpolation(
+                        grad3D(hash13(pi + posNoOffsetArr[0], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[0]),
+                        grad3D(hash13(pi + posNoOffsetArr[1], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[1]), 
                         u ),
-                    COSInterpolation( 
-                        grad3D(hash13(pi + float3(0, 1, 0), Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - float3(0, 1, 0)), 
-                        grad3D(hash13(pi + float3(1, 1, 0), Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - float3(1, 1, 0)), 
+                    COSInterpolation(
+                        grad3D(hash13(pi + posNoOffsetArr[2], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[2]), 
+                        grad3D(hash13(pi + posNoOffsetArr[3], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[3]), 
                         u ), 
                     v ),
         		 COSInterpolation( 
                     COSInterpolation( 
-                        grad3D(hash13(pi + float3(0, 0, 1), Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - float3(0, 0, 1)), 
-                        grad3D(hash13(pi + float3(1, 0, 1), Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - float3(1, 0, 1)), 
+                        grad3D(hash13(pi + posNoOffsetArr[4], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[4]), 
+                        grad3D(hash13(pi + posNoOffsetArr[5], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[5]), 
                         u ),
             		COSInterpolation( 
-                        grad3D(hash13(pi + float3(0, 1, 1), Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - float3(0, 1, 1)), 
-                        grad3D(hash13(pi + float3(1, 1, 1), Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - float3(1, 1, 1)), 
+                        grad3D(hash13(pi + posNoOffsetArr[6], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[6]), 
+                        grad3D(hash13(pi + posNoOffsetArr[7], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[7]), 
                         u ), 
                     v ), 
-                w ) + sin(Coverage);
+                w ) + Coverage;
 }
 
 // Returns the point in a given cell

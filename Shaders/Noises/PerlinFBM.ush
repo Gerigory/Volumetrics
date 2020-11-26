@@ -1,12 +1,12 @@
     float sum = 0.0;
-    float frequency =0.0;
-    float amplitude = 0.0;
+    float frequency =1.0;
+    float amplitude = 1.0;
 	const float persistence = 0.6;
     for(int i=firstOctave; i < firstOctave + accumOctaves;i++)
     {
-        frequency = pow(2.0,float(i));
-        amplitude = pow(persistence,float(i));
 		uvw += iTime * TimeScale;
-        sum += perlin(uvw * frequency, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler) * amplitude;
+        sum += perlin(uvw * frequency, SliceNum, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler) * amplitude;
+        frequency *= 2.0;
+        amplitude *= persistence;
     }
 	return sum;
