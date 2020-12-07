@@ -1,9 +1,41 @@
-    float frequency = pow(2, firstOctave);
-    float WorleyNoise[3];
-    for (int i = firstOctave; i < firstOctave + 3; i++)
+    if(IsFBM > 0.5)
     {
-        uvw += iTime * 0.04;
-        WorleyNoise[i] = worley(uvw * frequency, CellNum) / frequency;
-		frequency *= 2.0;
+        //Worley FBM
+        float fFinalWorley = 0;
+        float WorleyNoiseWeight[3] = {0.625, 0.25, 0.125};
+        for(int nChannel = 0; nChannel < 3; nChannel ++)
+        {
+            int nStartOctave = firstOctave + nChannel  * OctaveSpan;
+            float frequency = pow(2, nStartOctave);
+            float WorleyNoise = 0;
+            for (int i = nStartOctave; i < nStartOctave + 3; i ++ )
+            {
+                uvw += iTime * 0.04;
+                float fCurWorleyNoise = worley(uvw * frequency, CellNum, NoiseTexRes, WhiteNoise, WhiteNoiseSampler) / frequency;
+                WorleyNoise += clamp(fCurWorleyNoise * saturateness, 0.0, 1.0);
+                frequency *= pow(2.0, OctaveSpan);
+            }
+            fFinalWorley += WorleyNoise * WorleyNoiseWeight[nChannel];
+        }
+
+        return fFinalWorley;
     }
-	return clamp(float3(WorleyNoise[0], WorleyNoise[1], WorleyNoise[2]) * saturateness, 0.0, 1.0);
+    else if(IsFBM < -0.5)
+    {
+        float frequency = pow(2, firstOctave);
+        return clamp(worley((uvw + iTime * 0.04)* frequency, CellNum, NoiseTexRes, WhiteNoise, WhiteNoiseSampler)  * saturateness, 0.0, 1.0);
+    }
+    else
+    {
+        int nStartOctave = firstOctave;
+        float frequency = pow(2, nStartOctave);
+        float WorleyNoise = 0;
+        for (int i = nStartOctave; i < nStartOctave + 3; i ++ )
+        {
+            uvw += iTime * 0.04;
+            float fCurWorleyNoise = worley(uvw * frequency, CellNum, NoiseTexRes, WhiteNoise, WhiteNoiseSampler) / frequency;
+            WorleyNoise += clamp(fCurWorleyNoise * saturateness, 0.0, 1.0);
+            frequency *= pow(2.0, OctaveSpan);
+        }
+        return WorleyNoise;
+    }

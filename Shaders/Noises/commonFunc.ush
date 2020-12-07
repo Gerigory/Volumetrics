@@ -1,7 +1,9 @@
 // Arbitrary random, can be replaced with a function of your choice
-float rand(float2 co)
+float rand(float3 pos, int NoiseTexRes, Texture2D WhiteNoise, SamplerState WhiteNoiseSampler)
 {
-    return frac(sin(dot(co.xy ,float2(12.9898,78.233))) * 43758.5453);
+    float2 uv = pos.xy + pos.z;
+	// return Texture2DSample(WhiteNoise, WhiteNoiseSampler, uv).r;
+	return Texture2DSample(WhiteNoise, WhiteNoiseSampler, uv / NoiseTexRes).r;
 }
 
 float grad3D(float hash, float3 pos) 
@@ -177,18 +179,19 @@ float potential(float3 uvw, int firstOctave, int accumOctaves, int iTime, float 
 }
 
 // Returns the point in a given cell
-float3 get_cell_point(float3 cell, int CellNum) 
+float3 get_cell_point(float3 cell, int CellNum, int NoiseTexRes, Texture2D WhiteNoise, SamplerState WhiteNoiseSampler) 
 {
 	float3 cell_base = cell / CellNum;
-	float noise_x = rand(cell.xy);
-    float noise_y = rand(cell.yz);
-    float noise_z = rand(cell.zx);
+	float noise_x = rand(cell.xyz, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
+    float noise_y = rand(cell.yzx, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
+    float noise_z = rand(cell.zxy, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
     return cell_base + (0.5 + 1.5 * float3(noise_x, noise_y, noise_z)) / CellNum;
 }
 
+// https://www.shadertoy.com/view/MstGRl
 // Performs worley noise by checking all adjacent cells
 // and comparing the distance to their points
-float worley(float3 coord, int CellNum)
+float worley(float3 coord, int CellNum, int NoiseTexRes, Texture2D WhiteNoise, SamplerState WhiteNoiseSampler)
 {
     float3 cell = floor(coord * CellNum);
     float dist = 10000.0;
@@ -200,7 +203,7 @@ float worley(float3 coord, int CellNum)
 		{
 			for(int z = 0; z < 5; z++)
 			{
-				float3 cell_point = get_cell_point(cell + float3(x-2, y-2, z-2), CellNum);
+				float3 cell_point = get_cell_point(cell + float3(x-2, y-2, z-2), CellNum, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
 				dist = min(dist, length(cell_point - coord));
 			}
         }
