@@ -23,5 +23,6 @@
 
 ## Volumetric Fog/Light Shaft
 
-1. UE光源自带的Light Shaft开关（Occlusion Method + Bloom Method）+ ExponentialHeightFog可以在PC上得到非常不错的Light Shaft效果（见Resource目录下的VolumetricFog.mp4），但是这种做法在Mobile上并不支持
-2. 
+1. UE光源自带的Light Shaft开关（Occlusion Method + Bloom Method）+ ExponentialHeightFog可以在PC上得到非常不错的Light Shaft效果（见Resource目录下的VolumetricFog.mp4），但是这种做法在Mobile上并不支持（主要是Occlusion Method不支持）
+2. Mobile Light Shaft
+   1. Bloom Method

@@ -1,4 +1,4 @@
-    if(IsFBM > 0.5)
+    if(IsFBM > 0.001)
     {
         //Worley FBM
         float fFinalWorley = 0;
@@ -7,35 +7,28 @@
         {
             int nStartOctave = firstOctave + nChannel  * OctaveSpan;
             float frequency = pow(2, nStartOctave);
-            float WorleyNoise = 0;
-            for (int i = nStartOctave; i < nStartOctave + 3; i ++ )
+            uvw += iTime * 0.04;
+            float WorleyNoise = clamp(worley(uvw * frequency, CellNum, NoiseTexRes, WhiteNoise, WhiteNoiseSampler) * saturateness, 0.0, 1.0);
+            if(MulCellNumAdd > 0.1f)
             {
-                uvw += iTime * 0.04;
-                float fCurWorleyNoise = worley(uvw * frequency, CellNum, NoiseTexRes, WhiteNoise, WhiteNoiseSampler) / frequency;
-                WorleyNoise += clamp(fCurWorleyNoise * saturateness, 0.0, 1.0);
-                frequency *= pow(2.0, OctaveSpan);
+                WorleyNoise += clamp(worley(uvw * frequency, CellNum * 2, NoiseTexRes, WhiteNoise, WhiteNoiseSampler) * saturateness, 0.0, 1.0);
+                WorleyNoise /= 2.0;
             }
             fFinalWorley += WorleyNoise * WorleyNoiseWeight[nChannel];
         }
 
         return fFinalWorley;
     }
-    else if(IsFBM < -0.5)
-    {
-        float frequency = pow(2, firstOctave);
-        return clamp(worley((uvw + iTime * 0.04)* frequency, CellNum, NoiseTexRes, WhiteNoise, WhiteNoiseSampler)  * saturateness, 0.0, 1.0);
-    }
     else
     {
-        int nStartOctave = firstOctave;
-        float frequency = pow(2, nStartOctave);
-        float WorleyNoise = 0;
-        for (int i = nStartOctave; i < nStartOctave + 3; i ++ )
+        float frequency = pow(2, firstOctave);
+        uvw += iTime * 0.04;
+        float fCurWorleyNoise = clamp(worley(uvw* frequency, CellNum, NoiseTexRes, WhiteNoise, WhiteNoiseSampler)  * saturateness, 0.0, 1.0);
+        if(MulCellNumAdd > 0.1f)
         {
-            uvw += iTime * 0.04;
-            float fCurWorleyNoise = worley(uvw * frequency, CellNum, NoiseTexRes, WhiteNoise, WhiteNoiseSampler) / frequency;
-            WorleyNoise += clamp(fCurWorleyNoise * saturateness, 0.0, 1.0);
-            frequency *= pow(2.0, OctaveSpan);
+            fCurWorleyNoise += clamp(worley(uvw* frequency, CellNum * 2, NoiseTexRes, WhiteNoise, WhiteNoiseSampler)  * saturateness, 0.0, 1.0);
+            fCurWorleyNoise /= 2.0f;
         }
-        return WorleyNoise;
+        return fCurWorleyNoise;
     }
+

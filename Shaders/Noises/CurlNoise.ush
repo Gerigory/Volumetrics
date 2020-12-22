@@ -3,17 +3,17 @@
 float eps = 0.0001;
 float x = uv.x;
 float y = uv.y;
-
+float fCoverage = 0.7f;
 float TimeScale = 0.004f;
 //Find rate of change in X direction
-float n1 = potential(float3(x + eps, y, 0), firstOctave, accumOctaves, iTime, TimeScale, 1, 0, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
-float n2 = potential(float3(x - eps, y, 0), firstOctave, accumOctaves, iTime, TimeScale, 1, 0, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
+float n1 = potential(float3(x + eps, y, 0), firstOctave, accumOctaves, iTime, TimeScale, 1, fCoverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
+float n2 = potential(float3(x - eps, y, 0), firstOctave, accumOctaves, iTime, TimeScale, 1, fCoverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
 //Average to find approximate derivative
 float a = (n1 - n2)/(2 * eps);
 
 //Find rate of change in Y direction
-float n3 = potential(float3(x, y + eps, 0), firstOctave, accumOctaves, iTime, TimeScale, 1, 0, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
-float n4 = potential(float3(x, y - eps, 0), firstOctave, accumOctaves, iTime, TimeScale, 1, 0, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
+float n3 = potential(float3(x, y + eps, 0), firstOctave, accumOctaves, iTime, TimeScale, 1, fCoverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
+float n4 = potential(float3(x, y - eps, 0), firstOctave, accumOctaves, iTime, TimeScale, 1, fCoverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
 //Average to find approximate derivative
 float b = (n3 - n4)/(2 * eps);
 

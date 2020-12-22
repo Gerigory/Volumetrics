@@ -4,9 +4,10 @@
     float amplitude = pow(persistence, firstOctave);
     for(int i=firstOctave; i < firstOctave + accumOctaves;i++)
     {
-		uvw += iTime * TimeScale;
+		uvw -= iTime * TimeScale;
         sum += perlin(uvw * frequency, SliceNum, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler) * amplitude;
         frequency *= 2.0;
         amplitude *= persistence;
     }
 	return sum;
+    

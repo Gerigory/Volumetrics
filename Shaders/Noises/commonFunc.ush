@@ -17,11 +17,18 @@ float grad3D(float hash, float3 pos)
     // return ((h&1) == 0 ? u : -u) + ((h&2) == 0 ? v : -v);
 }
 
-float hash13(float3 pos, int NoiseTexRes, Texture2D WhiteNoise, SamplerState WhiteNoiseSampler)
+// Fractional value for sample position in the cloud layer .
+float GetHeightFractionForPoint(float3 inPosition, float2 inCloudMinMax)
 {
-    float2 uv = pos.xy + pos.z;
-	return Texture2DSample(WhiteNoise, WhiteNoiseSampler, uv / NoiseTexRes).r;
+    // Get global fractional position in cloud zone .
+    float height_fraction = (inPosition.z - inCloudMinMax.x) / (inCloudMinMax.y - inCloudMinMax.x);
+    return saturate(height_fraction);
+}
 
+// Utility function that maps a value from one range to another .
+float Remap(float original_value , float original_min, float original_max , float new_min , float new_max)
+{
+    return new_min + ((original_value - original_min) / (original_max - original_min)) * (new_max - new_min);
 }
 
 float fade(float t) 
@@ -35,7 +42,6 @@ float COSInterpolation(float x,float y,float n)
     // float r = n*3.1415926;
     // float f = (1.0-cos(r))*0.5;
     // return x*(1.0-f)+y*f;
-    
 }
 
 float perlin(float3 uvw, float SliceNum, float Coverage, int NoiseTexRes, Texture2D WhiteNoise, SamplerState WhiteNoiseSampler)
@@ -75,22 +81,22 @@ float perlin(float3 uvw, float SliceNum, float Coverage, int NoiseTexRes, Textur
     return  COSInterpolation( 
                 COSInterpolation( 
                     COSInterpolation(
-                        grad3D(hash13(pi + posNoOffsetArr[0], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[0]),
-                        grad3D(hash13(pi + posNoOffsetArr[1], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[1]), 
+                        grad3D(rand(pi + posNoOffsetArr[0], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[0]),
+                        grad3D(rand(pi + posNoOffsetArr[1], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[1]), 
                         u ),
                     COSInterpolation(
-                        grad3D(hash13(pi + posNoOffsetArr[2], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[2]), 
-                        grad3D(hash13(pi + posNoOffsetArr[3], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[3]), 
+                        grad3D(rand(pi + posNoOffsetArr[2], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[2]), 
+                        grad3D(rand(pi + posNoOffsetArr[3], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[3]), 
                         u ), 
                     v ),
         		 COSInterpolation( 
                     COSInterpolation( 
-                        grad3D(hash13(pi + posNoOffsetArr[4], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[4]), 
-                        grad3D(hash13(pi + posNoOffsetArr[5], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[5]), 
+                        grad3D(rand(pi + posNoOffsetArr[4], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[4]), 
+                        grad3D(rand(pi + posNoOffsetArr[5], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[5]), 
                         u ),
             		COSInterpolation( 
-                        grad3D(hash13(pi + posNoOffsetArr[6], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[6]), 
-                        grad3D(hash13(pi + posNoOffsetArr[7], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[7]), 
+                        grad3D(rand(pi + posNoOffsetArr[6], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[6]), 
+                        grad3D(rand(pi + posNoOffsetArr[7], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[7]), 
                         u ), 
                     v ), 
                 w ) + Coverage;
@@ -102,7 +108,7 @@ float perlinFBM(float3 uvw, int firstOctave, int accumOctaves, int iTime, float 
     float frequency = pow(2, firstOctave);
 	const float persistence = 0.6;
     float amplitude = pow(persistence, firstOctave);
-    for(int i=17; i < 17 + 1;i++)
+    for(int i=firstOctave; i < firstOctave + accumOctaves;i++)
     {
 		uvw += iTime * TimeScale;
         sum += perlin(uvw * frequency, SliceNum, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler) * amplitude;
@@ -110,6 +116,22 @@ float perlinFBM(float3 uvw, int firstOctave, int accumOctaves, int iTime, float 
         amplitude *= persistence;
     }
 	return sum;
+}
+
+float CloudTypeConvert(float OriginalNoise, float StratusThreshold, float CumulousThreshold)
+{
+    if(OriginalNoise > StratusThreshold)
+    {
+        return 0.0f;
+    }
+    else if(OriginalNoise < CumulousThreshold)
+    {
+        return 1.0f;
+    }
+    else
+    {
+        return 0.5f;
+    }
 }
 
 float smooth_step(float r)
@@ -129,7 +151,9 @@ float ramp(float r)
 
 float potential(float3 uvw, int firstOctave, int accumOctaves, int iTime, float TimeScale, float SliceNum, float Coverage, int NoiseTexRes, Texture2D WhiteNoise, SamplerState WhiteNoiseSampler)
 {
-    return perlinFBM(uvw, firstOctave, accumOctaves, iTime, TimeScale, SliceNum, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
+    float noise = perlinFBM(uvw, firstOctave, accumOctaves, iTime, TimeScale, SliceNum, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
+    return abs(1 - 2 * noise);
+
     float x = uvw.x;
     float y = uvw.y;
     
@@ -208,9 +232,5 @@ float worley(float3 coord, int CellNum, int NoiseTexRes, Texture2D WhiteNoise, S
 			}
         }
     }
-	
-	float3 invCellsNum = float3(1.0 / CellNum, 1.0 / CellNum, 1.0 / CellNum);
-	dist /= length(invCellsNum);
-    dist = 1.0 - dist;
     return dist;
 
