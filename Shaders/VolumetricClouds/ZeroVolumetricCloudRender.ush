@@ -1,0 +1,55 @@
+#pragma once
+
+#define UseDetailTexture 0
+#define Debug true
+
+const float TanHalfFOV = 1;
+const float3 SO = float3(0, 0, PlanetRadius);
+const float3 RayOrigin = ResolvedView.WorldCameraOrigin + SO;
+const float3 RayDirection = -Parameters.CameraVector;//Screen Space Pixel's Camera Ray Direction
+const float3 LightVector = MaterialExpressionSkyAtmosphereLightDirection(Parameters, 0);
+
+// Get Ray's Slope Depth Rather Than Projected Depth
+float SceneDepth = CalcSceneDepth(ScreenAlignedPosition(GetScreenPosition(Parameters))) / abs(dot(RayDirection, ResolvedView.ViewForward));
+float2 ViewSize = View.ViewSizeAndInvSize.xy;
+float3 PlanetOuter = SphereIntersection(RayOrigin, RayDirection, PlanetRadius, SceneDepth);
+float2 CloudIntersections = GetCloudIntersection(PlanetRadius, CloudMinMax.xy * 1000.0f, RayOrigin, RayDirection, SceneDepth).rg;
+float RayDistance = CloudIntersections.x;
+float MipLevel = GetMipLevel(RayDistance, TanHalfFOV, 1, VolumeResolution, ViewSize);
+
+if(Debug)
+{
+	MipLevel = 0;
+	// CloudIntersections = float2(3, 17) * StepSize;
+}
+if((CloudIntersections.y - CloudIntersections.x) < 1e-3)
+	return float4(1, 1, 1, 0);
+else
+	MaxSteps = min((CloudIntersections.y - CloudIntersections.x) / StepSize + 1, MaxSteps);
+
+float3 pos = ResolvedView.WorldCameraOrigin + CloudIntersections.x * RayDirection;
+float3 PWNoiseUVW = GetSampleUVW(pos, float4(CloudMinMax.xyz, 1.0f));
+float3 WeatherData = WeatherTex.SampleLevel(WeatherTexSampler, PWNoiseUVW.xy, 0).rgb;
+
+return CloudRendering(
+	pos, 
+	DensityScale, 
+	LightStepSize,
+	ResolvedView.DirectionalLightDirection,
+	float4(CloudMinMax.xyz, 1.0f), 
+	iTime, 
+	WeatherData, 
+	MipLevel,
+	MaxSteps,
+	StepSize,
+	PWNoiseTex,  
+	PWNoiseTexSampler,
+	CurlNoiseTex,  
+	CurlNoiseTexSampler,
+	HeightLUTTex,  
+	HeightLUTTexSampler
+);
+
+
+// #include "/Shaders/VolumetricClouds/VolumetricCloudCall.ush"
+// return 1;

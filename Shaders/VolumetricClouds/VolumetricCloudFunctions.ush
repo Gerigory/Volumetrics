@@ -1,0 +1,445 @@
+#pragma once
+
+#define NumShadowSteps 16
+struct CloudScene
+{
+	//Params from Custom Node Input
+	FMaterialPixelParameters Parameters;
+	float GroundRadius;
+	float Steps;
+	float DensityStep;
+	float ShadowStep;
+	Texture2D CloudMaskTexture;
+	SamplerState CloudMaskTextureSampler;
+	float CloudMaskScale;
+	float CloudMaskBias;
+	float2 OffsetXY;
+	float CloudLayerAltitude;
+	float CloudLayerThickness;
+	float CloudUpperFalloff;
+	float CloudLowerFalloff;
+	Texture3D CloudVolumeTexture;
+	SamplerState CloudVolumeTextureSampler;
+	float DetailScale_a;
+	float DetailAmount_a;
+	float DetailMip_a;
+	float DetailAltitudeShift_a;
+	float DetailScale_b;
+	float DetailAmount_b;
+	float DetailMip_b;
+	float3 SunColor;
+	float3 SkyColor;
+	float3 GroundColor;
+	float InternalScatterBoost;
+	float InternalScatterPower;
+	float4 ScatterDensityOctaves;
+	float4 ScatterIntensityOctaves;
+	float3 Panner;
+	float CloudDensity;
+	float ShadowDensity;
+	float AmbientDensity;
+	float PowderDensity;
+	
+	//View Setup
+	float3 RO;
+	float3 RD;
+	float3 LV;
+	float SceneDepth;
+	float TanHalfFOV;
+	float VolumeResolution;
+	float2 ViewSize;
+	
+	//locals
+	float3 LightEnergy;
+	float Transmittance;
+	float accumdist;	
+};
+
+float3 SphereIntersection(CloudScene Cloud, float inRadius)
+{
+	float3 ret = 1.0f;
+	float B = dot(Cloud.RD, Cloud.RO);
+	float C = dot(Cloud.RO, Cloud.RO) - inRadius * inRadius;
+
+	float t0 = -B - sqrt(B * B - C);
+	float t1 = -B + sqrt(B * B - C);
+	
+	t0 = max(t0, 0);
+	t1 = (t1 > 0) ? min(t1, Cloud.SceneDepth) : t1;
+	// return ret;
+
+	return float3(t0, t1, max(0, t1 - t0));
+}
+
+float GetMipLevel(CloudScene Cloud, float RayDistance, float RepeatSize)
+{
+	float TexelsPerPixel = ((RayDistance * Cloud.TanHalfFOV * 2) / RepeatSize) * (Cloud.VolumeResolution / max(Cloud.ViewSize.x, Cloud.ViewSize.y));
+	return max(0, log2(TexelsPerPixel));
+
+}
+
+float GetNormalizedRingDistance(CloudScene Cloud, float3 Pos, float ringnoise)
+{
+	float radialdist = length(Pos);
+	radialdist -= Cloud.GroundRadius + Cloud.CloudLayerAltitude;
+	radialdist /= Cloud.CloudLayerThickness + Cloud.DetailAltitudeShift_a;
+	
+	radialdist += ringnoise;
+	
+	return radialdist;
+}
+
+float GetLayerFalloff(CloudScene Cloud, float3 Pos, float layernoise)
+{
+	float ringdist = GetNormalizedRingDistance(Cloud, Pos, layernoise);
+	
+	return (1.0 - exp(-ringdist * Cloud.CloudLowerFalloff)) * (1.0 - exp(-(1.0 - ringdist) * Cloud.CloudUpperFalloff));
+}
+
+float SampleCloudLayer(CloudScene Cloud, float3 inPos, float inDetailAmount)
+{
+	
+	float4 flatsample = Cloud.CloudMaskTexture.SampleLevel(Cloud.CloudMaskTextureSampler, (inPos.xy / Cloud.CloudMaskScale) - Cloud.OffsetXY, 0);
+	
+	float detailnoise1 = Cloud.CloudVolumeTexture.SampleLevel(Cloud.CloudVolumeTextureSampler, (inPos / Cloud.DetailScale_a) + Cloud.Panner, 0 + Cloud.DetailMip_a).r - 0.5;
+	float detailnoise2 = Cloud.CloudVolumeTexture.SampleLevel(Cloud.CloudVolumeTextureSampler, (inPos / Cloud.DetailScale_b) + Cloud.Panner, 0 + Cloud.DetailMip_b).r - 0.5;
+	
+	float volsample = flatsample.r + ((detailnoise1) * inDetailAmount);
+	//volsample = max(volsample, flatsample.g + ((detailnoise2) * inDetailAmount * DetailAmount_b));
+	
+#if UseDetailTexture
+		float detailsample = VolumeTex.SampleLevel(VolumeTexSampler, (inPos / Cloud2Divisor) + Pan, 0.0 + Mip2).r;	
+		volsample = volsample + ((detailsample - 0.5) * Detail1Amount) - CloudMaskParams.g;
+#else
+	volsample = volsample - Cloud.CloudMaskBias;
+#endif
+	
+	float falloff = GetLayerFalloff(Cloud, inPos, (volsample - 1.0) * Cloud.DetailAltitudeShift_a);
+	volsample -= (1.0 / max(0.01, falloff)) * Cloud.CloudMaskBias;
+	volsample *= Cloud.CloudDensity;
+	volsample *= saturate(falloff);
+	//volsample = 1 - exp(-volsample * ExtraFog);
+
+	return volsample;
+}
+
+float4 RayMarch(CloudScene Cloud, float3 Pos, float3 Dir, int Steps, float MaxDist)
+{
+	float accum = 0;
+	float dist = 0;
+	float3 lightenergy = 0;
+	float cursample, lastsample, curdensity = 0;
+
+	for (int i = 0; i < Steps; i++)
+	{
+		//initialstepsize *= 1.05;
+	
+		cursample = SampleCloudLayer(Cloud, Pos, Cloud.DetailAmount_a);
+		
+		//dist += StepSize;
+		
+		if (cursample > 0)
+		{
+		
+			accum += cursample;
+		
+			float3 lpos = Pos;
+			lpos -= Cloud.LV * Cloud.ShadowStep;
+			float shadowdist = 0;
+			float shadowlength = 0;
+			
+			for (int shadowstep = 0; shadowstep < NumShadowSteps; shadowstep++)
+			{
+				
+				//float2 curnoise = MaterialExpressionVectorNoise(float3(shadowstep, i, 0), 1.00000000, 0.00000000, 0.00000000, 300.00000000).xyz;
+				
+				lpos += Cloud.LV * Cloud.ShadowStep;
+				//shadowlength += shadowstepsize;
+				float lsample = SampleCloudLayer(Cloud, lpos, Cloud.DetailAmount_a);
+				
+				shadowdist += max(0, lsample);
+				
+			}
+			
+			curdensity = 1.0 - exp(-max(0.0, cursample) * Cloud.DensityStep);
+			
+			lightenergy += exp(-shadowdist * Cloud.ShadowDensity * Cloud.ShadowStep) * curdensity * Cloud.SunColor * Cloud.Transmittance;
+			
+		#if 1
+			//float scattersample = Cloud.CloudVolumeTexture.SampleLevel(Cloud.CloudVolumeTextureSampler, (Pos / Cloud.CloudMaskScale) + Cloud.Panner, 0.0 + Cloud.DetailMip_a).r;
+			//scattersample = 1.0 - saturate(SampleCloudLayer(Pos, Cloud.DetailAmount_a * 0.5));
+			
+			//scattersample = exp(-pow((1.0 - scattersample), InternalScatterPower) * InternalScatterBoost);
+
+			float4 scattervalues = Cloud.ScatterDensityOctaves;
+			//texture based scattering variance
+				//scattervalues.g *= scattersample;
+				//scattervalues.b *= scattersample * scattersample;
+				//scattervalues.a *= scattersample * scattersample * scattersample;
+			
+			float4 scatterenergy = exp(-shadowdist * Cloud.ShadowDensity * Cloud.ShadowStep * scattervalues);
+			
+			
+			//scatterenergy *= 1.0 - exp(-(curdensity + (pow((1.0 - scattersample), InternalScatterPower) * InternalScatterBoost)) * PowderDensity);
+			
+			lightenergy += dot(scatterenergy, Cloud.ScatterIntensityOctaves) * curdensity * Cloud.SunColor * Cloud.Transmittance;
+			
+		#endif
+		#if 0
+				lightenergy += exp(-shadowdist * Cloud.ShadowDensity * shadowstepsize) * curdensity * Cloud.SunColor * transmittance;
+			
+				float scattersample = VolumeTex.SampleLevel(VolumeTexSampler, (Pos / CloudDivisor) + Pan, 0.0 + Mip1).r;
+				scattersample = exp(-pow((1 - scattersample), ScatteringParams.g) * ScatteringParams.r);
+	
+				shadowdist *= scattersample;
+				lightenergy += exp(-shadowdist * ScatteringParams.a * shadowstepsize) * curdensity * Cloud.SunColor * transmittance * ScatteringParams.b;
+		#endif
+			
+			
+			
+			//do transmittance after ambience
+			//transmittance *= 1 - curdensity;
+
+			if (Cloud.Transmittance < 0.001)
+			{
+				//transmittance = 0;
+				//return float4(lightenergy, accum);
+			}
+			
+#if 1 //Sky Lighting
+			lpos = Pos + normalize(Pos) * Cloud.DensityStep;
+			float lsample = SampleCloudLayer(Cloud, lpos, Cloud.DetailAmount_a);
+			shadowdist = lsample;
+			lpos = Pos + normalize(Pos) * Cloud.DensityStep * 2.0;
+			lsample = SampleCloudLayer(Cloud, lpos, Cloud.DetailAmount_a);
+			shadowdist += lsample;
+			shadowdist = max(0, shadowdist);
+			
+			lightenergy += exp(-shadowdist * Cloud.AmbientDensity * Cloud.DensityStep) * curdensity * Cloud.SkyColor * Cloud.Transmittance;
+			
+#endif
+			
+#if 1 // ground bounce
+			shadowdist = max(0, cursample);
+			lpos = Pos - normalize(Pos) * Cloud.DensityStep;
+			lsample = SampleCloudLayer(Cloud, lpos, Cloud.DetailAmount_a);
+			shadowdist = max(0, lsample);
+			lpos = Pos - normalize(Pos) * Cloud.DensityStep * 2;
+			lsample = SampleCloudLayer(Cloud, lpos, Cloud.DetailAmount_a);
+			shadowdist += max(0, lsample);
+			shadowdist = max(0, shadowdist);
+			//shadowdist = max(shadowdist, lsample + cursample);
+			
+			lightenergy += exp(-shadowdist * Cloud.AmbientDensity * Cloud.DensityStep) * curdensity * Cloud.GroundColor * Cloud.Transmittance * dot(0.3, Cloud.SkyColor);
+			
+#endif
+			
+			Cloud.Transmittance *= 1.0 - curdensity;
+		}
+		
+		if (dist > MaxDist)
+		{
+			//	Pos += Dir * fmod(StepSize, MaxDist);
+			//	cursample = PseudoVolumeTexture(Tex, TexSampler, Pos / CloudDivisor, 16, 256).r;
+			//	//accum += cursample * fmod(StepSize, MaxDist);
+			return float4(lightenergy, accum);
+		}
+		
+		Pos += Dir * Cloud.DensityStep;
+		//Cloud.DensityStep = max(initialstepsize, ((-cursample) * CloudDivisor * raycastdist) / Cloud.CloudDensity * (dist / MaxDist));
+		
+		Cloud.accumdist += Cloud.DensityStep * Cloud.Transmittance;
+	}
+	
+	return float4(lightenergy, Cloud.Transmittance);
+}
+	
+float4 Render(CloudScene Cloud, FMaterialPixelParameters Parameters)
+{
+	float LayerABottom = Cloud.GroundRadius + Cloud.CloudLayerAltitude;
+	float LayerATop = LayerABottom + Cloud.CloudLayerThickness;
+
+	float3 PlanetOuter = SphereIntersection(Cloud, Cloud.GroundRadius);
+	
+	//Use Planetary Distance beyond depth precision limits
+	if (Cloud.SceneDepth > 650000 && PlanetOuter.x > 0)
+	{
+		Cloud.SceneDepth = PlanetOuter.x;
+	}
+	
+	float3 LayerAOuter = SphereIntersection(Cloud, LayerATop);
+	float3 LayerAInner = SphereIntersection(Cloud, LayerABottom);
+	
+	float cloudentry = LayerAOuter.x;
+	float cloudexit = LayerAOuter.y;
+	
+	//extract rays that exit and re-enter the cloud layer
+	//Is Camera outisde the Inner Cloud layer
+	float mask = (LayerAInner.x > 0) ? 1 : 0;
+	//ignore rays that hit the planet surface
+	mask *= (PlanetOuter.x > 0) ? 0 : 1;
+	
+	//Ray exits and re-enters, stop the initial ray at that first exit spot, so we can skip empty space inbetween easily
+	if (mask == 1)
+	{
+		cloudexit = min(LayerAInner.x, Cloud.SceneDepth);
+	}
+
+	
+	// Ray Hits the Inner Shell of Cloud layer
+	if (LayerAInner.z > 0)
+	{
+		cloudexit = min(LayerAInner.x, Cloud.SceneDepth);
+	}
+	
+	//Camera is inside the bottom/inner cloud radius, advacnce ray to inner shell
+	if (LayerAInner.x == 0 && LayerAInner.z > 0)
+	{
+	
+		//LayerAInner.y 
+	
+	
+		cloudentry = LayerAInner.y;
+		cloudexit = LayerAOuter.y;
+	}
+	
+	float4 clouds = 0;
+	float clouddist = cloudexit - cloudentry;
+	float tracedist = 0;
+	
+	if (clouddist > 0)
+	{
+		Cloud.accumdist = cloudentry;
+		//StepSize = clouddist / MaxSteps;
+		
+		
+		float calcstep = ceil(clouddist / Cloud.DensityStep);
+		
+		
+		clouds = RayMarch(Cloud, Cloud.RO + cloudentry * Cloud.RD, Cloud.RD, Cloud.Steps, clouddist);
+	}
+	
+	if (mask == 1 && LayerAInner.y < Cloud.SceneDepth)
+	{
+		cloudentry = min(LayerAInner.y, Cloud.SceneDepth);
+		cloudexit = min(LayerAOuter.y, Cloud.SceneDepth);
+		
+		//skipdist = cloudentry;
+		
+		tracedist = cloudexit - cloudentry;
+		//StepSize = tracedist / Cloud.Steps;
+		clouds += RayMarch(Cloud, Cloud.RO + cloudentry * Cloud.RD, Cloud.RD, Cloud.Steps, tracedist);
+		
+		clouddist += tracedist;
+		clouddist += LayerAInner.z;
+		
+	}
+	
+	clouddist /= 2.0 * Cloud.GroundRadius;
+
+#if 0
+		Cloud.accumdist /= 10000;
+		float aerialp = (1-exp(-Cloud.accumdist * AtmosphereDensity));
+		transmittance = lerp(transmittance, 1.0, aerialp);
+		clouds.rgb *= 1.0-aerialp;
+		clouds.rgb += (Cloud.SunColor + Cloud.SkyColor) * aerialp * ExtraFog;
+#else
+	float3 appos = Cloud.RO + (Cloud.accumdist * Cloud.RD) - float3(0, 0, Cloud.GroundRadius);;
+	float4 ap = MaterialExpressionSkyAtmosphereAerialPerspective(Parameters, appos);
+	clouds.rgb *= ap.a;
+	clouds.rgb += ap.rgb * 1.0 * (1.0 - Cloud.Transmittance);
+	
+		
+#endif
+
+	return float4(clouds.rgb, Cloud.Transmittance);
+}
+
+struct CloudSceneMaker
+{
+	
+	CloudScene NewClouds;
+	
+	CloudScene MakeCloudLayer(
+		FMaterialPixelParameters InParameters, 
+		float inPlanetRadius, 
+		float inSteps, 
+		float inStepSize, 
+		Texture2D inCloudMask, 
+		SamplerState inMaskSampler, 
+		float4 inCloudBaseParams, 
+		float4 inFalloffParams, 
+		Texture3D inVolTex, 
+		SamplerState inVolSampler, 
+		float4 inDetailParamsA, 
+		float4 inDetailParamsB,
+		float3 inSunColor,
+		float3 inSkyColor,
+		float3 inGroundColor,
+		float4 inScatteringParams,
+		float3 inPanner,
+		float4 inDensityParams,
+		float3 inRO,
+		float3 inRD,
+		float3 inLV,
+		float inSceneDepth,
+		float inTanHalfFOV,
+		float2 inViewSize)
+	{
+		
+		NewClouds.Parameters = InParameters;
+		NewClouds.GroundRadius = inPlanetRadius;
+		NewClouds.Steps = inSteps;
+		NewClouds.DensityStep = inStepSize * min(4, 1 / abs(inRD.z));
+		NewClouds.ShadowStep = inStepSize * min(8, 1 / abs(inLV.z));
+		NewClouds.CloudMaskTexture = inCloudMask;
+		NewClouds.CloudMaskTextureSampler = inMaskSampler;
+		NewClouds.CloudMaskScale = inCloudBaseParams.r;
+		NewClouds.CloudMaskBias = inCloudBaseParams.g;
+		NewClouds.OffsetXY = inCloudBaseParams.ba;
+		NewClouds.CloudLayerAltitude = inFalloffParams.r;
+		NewClouds.CloudLayerThickness = inFalloffParams.g;
+		NewClouds.CloudUpperFalloff = inFalloffParams.b;
+		NewClouds.CloudLowerFalloff = inFalloffParams.a;
+		NewClouds.CloudVolumeTexture = inVolTex;
+		NewClouds.CloudVolumeTextureSampler = inVolSampler;
+		NewClouds.DetailScale_a = inDetailParamsA.r;
+		NewClouds.DetailAmount_a = inDetailParamsA.g;
+		NewClouds.DetailMip_a = inDetailParamsA.b;
+		NewClouds.DetailAltitudeShift_a = inDetailParamsA.a;
+		NewClouds.DetailScale_b = inDetailParamsB.r;
+		NewClouds.DetailAmount_b = inDetailParamsB.g;
+		NewClouds.DetailMip_b = inDetailParamsB.b;
+		NewClouds.SunColor = inSunColor;
+		NewClouds.SkyColor = inSkyColor;
+		NewClouds.GroundColor = inGroundColor;
+		NewClouds.InternalScatterBoost = inScatteringParams.r;
+		NewClouds.InternalScatterPower = inScatteringParams.g;
+		NewClouds.ScatterIntensityOctaves = float4(1, inScatteringParams.b, inScatteringParams.b * inScatteringParams.b, inScatteringParams.b * inScatteringParams.b * inScatteringParams.b);
+		NewClouds.ScatterDensityOctaves = float4(1, inScatteringParams.a, inScatteringParams.a * inScatteringParams.a, inScatteringParams.a * inScatteringParams.a * inScatteringParams.a);
+		NewClouds.Panner = inPanner;
+		NewClouds.CloudDensity = inDensityParams.r / 1000;
+		NewClouds.ShadowDensity = inDensityParams.g;
+		NewClouds.AmbientDensity = inDensityParams.b;
+		NewClouds.PowderDensity = inDensityParams.a;
+		NewClouds.RO = inRO;
+		NewClouds.RD = inRD;
+		NewClouds.LV = inLV;
+		NewClouds.SceneDepth = inSceneDepth;
+		NewClouds.TanHalfFOV = inTanHalfFOV;
+		NewClouds.VolumeResolution = 256;
+		NewClouds.ViewSize = inViewSize;
+		NewClouds.LightEnergy = 0;
+		NewClouds.Transmittance = 1;
+		NewClouds.accumdist = 0;
+		
+		return NewClouds;
+	}
+};
+
+float EmptyFunction()
+{
+	return 1.0f;
+// return 1;
+// }
+// #include "/Shaders/VolumetricClouds/VolumetricCloudFunctions.ush"

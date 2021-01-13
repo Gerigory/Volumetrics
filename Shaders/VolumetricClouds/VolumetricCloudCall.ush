@@ -1,0 +1,45 @@
+#pragma once
+
+#define UseDetailTexture 0
+
+const float TanHalfFOV = 1;
+const float3 SO = float3(0, 0, PlanetRadius);
+const float3 RayOrigin = ResolvedView.WorldCameraOrigin + SO;
+const float3 RayDirection = -Parameters.CameraVector;
+const float3 LightVector = MaterialExpressionSkyAtmosphereLightDirection(Parameters, 0);
+
+float SceneDepth = CalcSceneDepth(ScreenAlignedPosition(GetScreenPosition(Parameters))) / abs(dot(RayDirection, ResolvedView.ViewForward));
+float2 ViewRes = View.ViewSizeAndInvSize.xy;
+
+CloudSceneMaker CloudMaker;
+CloudScene Clouds = CloudMaker.MakeCloudLayer(
+    Parameters, 
+    PlanetRadius, 
+    MaxSteps, 
+    StepSize, 
+    CloudMask, 
+    CloudMaskSampler, 
+    CloudMaskParams, 
+    FalloffParams, 
+    VolumeTex, 
+    VolumeTexSampler, 
+    Detail1Params, 
+    Detail2Params, 
+    SunColor, 
+    SkyColor, 
+    GroundColor, 
+    ScatteringParams, 
+    Pan, 
+    DensityParams, 
+    RayOrigin, 
+    RayDirection, 
+    LightVector, 
+    SceneDepth, 
+    TanHalfFOV, 
+    ViewRes);
+
+return Render(Clouds, Parameters);
+
+
+// #include "/Shaders/VolumetricClouds/VolumetricCloudCall.ush"
+// return 1;
