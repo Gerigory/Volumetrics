@@ -1,11 +1,11 @@
 #pragma once
 
-#define UseDetailTexture 0
 #define Debug true
 
 const float TanHalfFOV = 1;
-const float3 SO = float3(0, 0, PlanetRadius);
-const float3 RayOrigin = ResolvedView.WorldCameraOrigin + SO;
+const float3 SphereOrigin = float3(0, 0, PlanetRadius);
+float3 CamPosInMeters = ResolvedView.WorldCameraOrigin / 100.0f;//from centimeter to meters
+const float3 RayOrigin = CamPosInMeters + SphereOrigin;
 const float3 RayDirection = -Parameters.CameraVector;//Screen Space Pixel's Camera Ray Direction
 const float3 LightVector = MaterialExpressionSkyAtmosphereLightDirection(Parameters, 0);
 
@@ -27,28 +27,32 @@ if((CloudIntersections.y - CloudIntersections.x) < 1e-3)
 else
 	MaxSteps = min((CloudIntersections.y - CloudIntersections.x) / StepSize + 1, MaxSteps);
 
-float3 pos = ResolvedView.WorldCameraOrigin + CloudIntersections.x * RayDirection;
-float3 PWNoiseUVW = GetSampleUVW(pos, float4(CloudMinMax.xyz, 1.0f));
+float3 pos = RayOrigin + CloudIntersections.x * RayDirection;//unit in meter
+float3 PWNoiseUVW = GetSampleUVW(pos - SphereOrigin, float4(CloudMinMax.xyz, 1.0f));
 float3 WeatherData = WeatherTex.SampleLevel(WeatherTexSampler, PWNoiseUVW.xy, 0).rgb;
 
-return CloudRendering(
-	pos, 
-	DensityScale, 
-	LightStepSize,
-	ResolvedView.DirectionalLightDirection,
-	float4(CloudMinMax.xyz, 1.0f), 
-	iTime, 
-	WeatherData, 
-	MipLevel,
-	MaxSteps,
-	StepSize,
-	PWNoiseTex,  
-	PWNoiseTexSampler,
-	CurlNoiseTex,  
-	CurlNoiseTexSampler,
-	HeightLUTTex,  
-	HeightLUTTexSampler
-);
+
+CloudScene Cloud;
+Cloud.pos = pos; 
+Cloud.DensityScale = DensityScale; 
+Cloud.LightStepSize = LightStepSize;
+Cloud.DirectionalLightDirection = ResolvedView.DirectionalLightDirection;
+Cloud.CloudMinMax = float4(CloudMinMax.xyz, 1.0f); 
+Cloud.iTime = iTime; 
+Cloud.WeatherData = WeatherData; 
+Cloud.MipLevel = MipLevel;
+Cloud.MaxSteps = MaxSteps;
+Cloud.StepSize = StepSize;
+Cloud.PWNoiseTex = PWNoiseTex;  
+Cloud.PWNoiseTexSampler = PWNoiseTexSampler;
+Cloud.CurlNoiseTex = CurlNoiseTex;  
+Cloud.CurlNoiseTexSampler = CurlNoiseTexSampler;
+Cloud.HeightLUTTex = HeightLUTTex;  
+Cloud.HeightLUTTexSampler = HeightLUTTexSampler;
+Cloud.RayDirection = RayDirection;
+Cloud.SphereOrigin = SphereOrigin;
+
+return CloudRendering(Cloud);
 
 
 // #include "/Shaders/VolumetricClouds/VolumetricCloudCall.ush"
