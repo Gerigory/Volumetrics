@@ -12,25 +12,25 @@ const float3 LightVector = MaterialExpressionSkyAtmosphereLightDirection(Paramet
 // Get Ray's Slope Depth Rather Than Projected Depth
 float SceneDepth = CalcSceneDepth(ScreenAlignedPosition(GetScreenPosition(Parameters))) / abs(dot(RayDirection, ResolvedView.ViewForward));
 float2 ViewSize = View.ViewSizeAndInvSize.xy;
-float3 PlanetOuter = SphereIntersection(RayOrigin, RayDirection, PlanetRadius, SceneDepth);
+// float3 PlanetOuter = SphereIntersection(RayOrigin, RayDirection, PlanetRadius, SceneDepth);
 float2 CloudIntersections = GetCloudIntersection(PlanetRadius, CloudMinMax.xy * 1000.0f, RayOrigin, RayDirection, SceneDepth).rg;
-float RayDistance = CloudIntersections.x;
-float MipLevel = GetMipLevel(RayDistance, TanHalfFOV, 1, VolumeResolution, ViewSize);
+float RayStartDistance = CloudIntersections.x;
+float MipLevel = GetMipLevel(RayStartDistance, TanHalfFOV, 1, VolumeResolution, ViewSize);
 
 if(Debug)
 {
 	MipLevel = 0;
 	// CloudIntersections = float2(3, 17) * StepSize;
 }
-if((CloudIntersections.y - CloudIntersections.x) < 1e-3)
+float RayLength = CloudIntersections.y - RayStartDistance;
+if((RayLength) < 1e-3)
 	return float4(1, 1, 1, 0);
 else
-	MaxSteps = min((CloudIntersections.y - CloudIntersections.x) / StepSize + 1, MaxSteps);
+	MaxSteps = min(RayLength / StepSize + 1, MaxSteps);
 
-float3 pos = RayOrigin + CloudIntersections.x * RayDirection;//unit in meter
-float3 PWNoiseUVW = GetSampleUVW(pos - SphereOrigin, float4(CloudMinMax.xyz, 1.0f));
+float3 pos = RayOrigin + RayStartDistance * RayDirection;//unit in meter
+float3 PWNoiseUVW = GetSampleUVW(pos, SphereOrigin.z, float4(CloudMinMax.xyz, 1.0f));
 float3 WeatherData = WeatherTex.SampleLevel(WeatherTexSampler, PWNoiseUVW.xy, 0).rgb;
-
 
 CloudScene Cloud;
 Cloud.pos = pos; 
@@ -50,10 +50,14 @@ Cloud.CurlNoiseTexSampler = CurlNoiseTexSampler;
 Cloud.HeightLUTTex = HeightLUTTex;  
 Cloud.HeightLUTTexSampler = HeightLUTTexSampler;
 Cloud.RayDirection = RayDirection;
+float3 xDir = float3(1, 0, 0);
+Cloud.BiTangent = normalize(cross(RayDirection, xDir));
+Cloud.Tangent = normalize(cross(Cloud.BiTangent, RayDirection));
 Cloud.SphereOrigin = SphereOrigin;
+Cloud.RayOrigin = RayOrigin;
 
 return CloudRendering(Cloud);
 
 
-// #include "/Shaders/VolumetricClouds/VolumetricCloudCall.ush"
+// #include "/Shaders/VolumetricClouds/ZeroVolumetricCloudRender.ush"
 // return 1;
