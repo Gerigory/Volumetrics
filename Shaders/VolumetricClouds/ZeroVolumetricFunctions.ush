@@ -2,6 +2,7 @@
 
 #define NumShadowSteps 16
 #define Episilon 1e-6
+#define DEUBG 1
 
 struct CloudScene
 {
@@ -10,15 +11,18 @@ struct CloudScene
 	float LightStepSize;
 	float3 DirectionalLightDirection;
 	float4 CloudMinMax;
+	float4 CloudScaleParams;
 	int iTime;
-	float3 WeatherData;
-	float MipLevel;
+	float VolumeResolution;
+	float2 ViewSize;
 	float MaxSteps;
 	float StepSize;
 	Texture3D PWNoiseTex; 
 	SamplerState PWNoiseTexSampler;
 	Texture2D CurlNoiseTex; 
 	SamplerState CurlNoiseTexSampler;
+	Texture2D WeatherTex; 
+	SamplerState WeatherTexSampler;
 	Texture2D HeightLUTTex;  
 	SamplerState HeightLUTTexSampler;
 	float3 RayDirection;
@@ -26,6 +30,7 @@ struct CloudScene
 	float3 BiTangent;//Y Direction Tangent
 	float3 SphereOrigin;
 	float3 RayOrigin;	
+	float Debug;	
 };
 
 // find the intersection distance from camera of 
@@ -130,7 +135,8 @@ float GetMipLevel(float RayDistance, float TanHalfFOV, float RepeatSize, float V
 
 float GetDensityHeightGradientForPoint(float HeightFraction, float3 WeatherData, Texture2D HeightLUTTex,  SamplerState HeightLUTTexSampler)
 {
-	float3 HeightLUT = HeightLUTTex.SampleLevel(HeightLUTTexSampler, float2(0, HeightFraction), 0).rgb;
+	float y = 1 - HeightFraction;//flip y
+	float3 HeightLUT = HeightLUTTex.SampleLevel(HeightLUTTexSampler, float2(0, y), 0).rgb;
 	int CloudType = round(saturate(WeatherData.b) * 2 );// 0 for stratus, 1 for stratucumulous, 2 for cumulous
 	if(0 == CloudType)
 		return HeightLUT.x;
@@ -142,22 +148,25 @@ float GetDensityHeightGradientForPoint(float HeightFraction, float3 WeatherData,
 
 // Get The Texture Sample UV
 // @ float3 pos, Position in Planetary Space, Planet Center is The Origin
-// @ float PlanetRadius, 
-// @ float4 inCloudMinMax
-float3 GetSampleUVW(float3 pos, float PlanetRadius, float4 inCloudMinMax)
+// @ float UVScale, Detail Scale
+// @ float CloudTileSize, Cloud Repeat Size
+float3 GetSampleUVW(float3 pos, float UVScale, float CloudTileSize)
 {
-	pos.z = length(pos) - PlanetRadius;//Position Altitude
+	// pos.z = length(pos) - PlanetRadius;//Position Altitude
 	float3 PosInKm = pos / 1000.0f;
-	float3 PWNoiseUVW = (PosInKm + float3(inCloudMinMax.z, inCloudMinMax.z, -inCloudMinMax.x)) / float3(inCloudMinMax.z * 2, inCloudMinMax.z * 2, inCloudMinMax.y - inCloudMinMax.x);
-	return frac(PWNoiseUVW);
+	float3 PWNoiseUVW = PosInKm / float3(CloudTileSize, CloudTileSize*0.8, CloudTileSize) * UVScale;
+	// float3 PWNoiseUVW = PosInKm / CloudTileSize * UVScale;
+	// return frac(PWNoiseUVW);
+	return PWNoiseUVW;
 }
-
 
 float SampleCloudDensity(float3 pos, CloudScene Cloud, bool SampleUsingCheapWay)
 {
 	// Get the height fraction for use with blending noise types over height .
 	float HeightFraction = GetHeightFractionForPoint(pos, Cloud.SphereOrigin.z, Cloud.CloudMinMax);
-	// Wind Simulation -----------------------------------------
+
+	// Wind Simulation ----------------------------------------- Ignore First
+	if(0.5f > Cloud.Debug)
 	{
 		// Wind settings .
 		float3 wind_direction = float3(1.0 , 0.0 , 0.0);
@@ -180,9 +189,11 @@ float SampleCloudDensity(float3 pos, CloudScene Cloud, bool SampleUsingCheapWay)
 	// Base Cloud Modeling -----------------------------------------
 
 	// Read the low-frequency Perlin-Worley and Worley noises .
-	float3 PWNoiseUVW = GetSampleUVW(pos, Cloud.SphereOrigin.z, Cloud.CloudMinMax);
+	float3 PWNoiseUVW = GetSampleUVW(pos, Cloud.CloudScaleParams.x, Cloud.CloudMinMax.z);
 	// r -> perlin noise, g -> low frequency pw noise, b -> high frequency pw noise
-	float2 PWNoise = Cloud.PWNoiseTex.SampleLevel(Cloud.PWNoiseTexSampler, PWNoiseUVW, Cloud.MipLevel).rg;
+	float3 RayStartDistance = distance(pos, Cloud.RayOrigin);
+	float MipLevel = GetMipLevel(RayStartDistance, 1.0, 1, Cloud.VolumeResolution, Cloud.ViewSize);
+	float2 PWNoise = Cloud.PWNoiseTex.SampleLevel(Cloud.PWNoiseTexSampler, PWNoiseUVW, MipLevel).rg;
 
 	// Build an FBM out of the low frequency Worley noises  that can be used to add detail to the 
 	// low-frequency Perlin-Worley noise .
@@ -194,18 +205,22 @@ float SampleCloudDensity(float3 pos, CloudScene Cloud, bool SampleUsingCheapWay)
 
 	// Get the density-height gradient using the density height
 	// function explained in Section 2.2 .
-	float DensityHeightGradient = GetDensityHeightGradientForPoint(HeightFraction, Cloud.WeatherData, Cloud.HeightLUTTex,  Cloud.HeightLUTTexSampler);
+	float2 WeatherUVW = GetSampleUVW(pos, 1.0,  Cloud.CloudMinMax.z).rg;
+	float3 WeatherData = Cloud.WeatherTex.SampleLevel(Cloud.WeatherTexSampler, WeatherUVW, 0).rgb;
+
+	float DensityHeightGradient = GetDensityHeightGradientForPoint(HeightFraction, WeatherData, Cloud.HeightLUTTex,  Cloud.HeightLUTTexSampler);
 
 	// Apply the height function to the base cloud shape .
 	BaseCloud *= DensityHeightGradient;
 
 	// Base Cloud Coverage Tunning -----------------------------------------
 	// Cloud coverage is stored in weather data’s red channel .
-	float cloud_coverage = Cloud.WeatherData.r;
-	// return cloud_coverage;
+	float cloud_coverage = WeatherData.r;
 
 	// Use remap to apply the cloud coverage attribute
-	float BaseCloudWithCoverage = RangeRemap(BaseCloud, cloud_coverage, 1.0, 0.0, 1.0);
+	float BaseCloudWithCoverage = BaseCloud;
+	BaseCloudWithCoverage = RangeRemap(BaseCloud, cloud_coverage * Cloud.CloudMinMax.w, 1.0, 0.0, 1.0);
+	// return BaseCloudWithCoverage;
 	// Multiply the result by the cloud coverage attribute so
 	// that smaller clouds are lighter and more aesthetically pleasing .
 	BaseCloudWithCoverage *= cloud_coverage;
@@ -219,15 +234,17 @@ float SampleCloudDensity(float3 pos, CloudScene Cloud, bool SampleUsingCheapWay)
 		// Add some turbulence to bottoms of clouds .
 		pos.xy += CurlNoise * (1.0 - HeightFraction);
 
-		PWNoiseUVW = GetSampleUVW(pos, Cloud.SphereOrigin.z, Cloud.CloudMinMax);
+		PWNoiseUVW = GetSampleUVW(pos, Cloud.CloudScaleParams.y, Cloud.CloudMinMax.z);
 		// Sample high-frequency noises .
-		float HighFreqFBM = Cloud.PWNoiseTex.SampleLevel(Cloud.PWNoiseTexSampler, PWNoiseUVW * 0.1 , Cloud.MipLevel).b;
+		float HighFreqFBM = Cloud.PWNoiseTex.SampleLevel(Cloud.PWNoiseTexSampler, PWNoiseUVW * 0.1 , MipLevel).b;
 
 		// Transition from wispy shapes to billowy shapes over height .
 		float high_freq_noise_modifier = lerp(HighFreqFBM, 1.0 - HighFreqFBM , saturate(HeightFraction * 10.0));
 
 		// Erode the base cloud shape with the distorted high-frequency Worley noises .
-		float final_cloud = RangeRemap(BaseCloudWithCoverage, high_freq_noise_modifier * 0.2 , 1.0 , 0.0 , 1.0);
+		float final_cloud = BaseCloudWithCoverage;
+		// if(0.5f >  Cloud.Debug)
+			final_cloud = RangeRemap(BaseCloudWithCoverage, high_freq_noise_modifier * 0.2 , 1.0 , 0.0 , 1.0);
 
 		return final_cloud * Cloud.DensityScale;
 	}
@@ -307,67 +324,144 @@ float SampleCloudDensityAlongCone(float3 pos, CloudScene Cloud)
 
 float4 CloudRendering(CloudScene Cloud)
 {
-	float Transmittance = 1.0;
+	float Transmittance = 1.0;// Light Falloff
 	float CloudTest = 0.0;
 	int ZeroDensitySampleCount = 0;
 	int HitSamples = 0;
+
+	float3 lightenergy = 0;
+	float3 SunColor = 1.0f;
+	float3 SkyColor = float3(0.1, 0.3, 0.7);
+	float3 GroundColor = float3(0.3, 0.3, 0.1);
+	float4 ScatterDensityOctaves = 0.1f;
+	float4 ScatterIntensityOctaves = 0.1f;
+	float ShadowDensity = 1.0f;
+	float AmbientDensity = 0.5f;
 	// Start the main ray−march loop .
 	for (int i = 0; i < Cloud.MaxSteps; i++)
 	{
 		if (Transmittance < 0.001)
 		{
-			//transmittance = 0;
-			//return float4(lightenergy, accum);
-			return float4(1, 1, 1, 1 - Transmittance);
+			break;
 		}
-		// cloud test starts as zero so we always evaluate the
-		// second case from the beginning .
-		if (CloudTest > 0.0)
+
+		if(0.5f <  Cloud.Debug)
 		{
-			// Sample density the expensive way, indicating a full sample .
-			float SampleDensity = SampleCloudDensity(Cloud.pos, Cloud, false);
-			HitSamples++;
-			// If we just samples a zero , increment the counter .
-			if(Episilon > abs(SampleDensity))
+			float cursample = SampleCloudDensity(Cloud.pos, Cloud, false);
+			if (cursample > 0)
 			{
-				ZeroDensitySampleCount ++;
-				// If we are doing an expensive sample that is still potentially in the cloud :
-				// if (ZeroDensitySampleCount != 6)
-				// {
-				// 	// SampleCloudDensityAlongCone just walks in the given direction from the start point and takes X number of lighting samples .
-				// 	float DensityAlongLightRay = SampleCloudDensityAlongCone(Cloud.pos, Cloud);
-				// } 
-			}
-			else
-			{
-				float fCurDensity = GetLightTransmittance(SampleDensity * Cloud.StepSize / 1000.0f);
-				Transmittance *= fCurDensity;
+				float3 lpos = Cloud.pos;
+				lpos -= Cloud.DirectionalLightDirection * Cloud.LightStepSize;
+				float shadowdist = 0;
+				float shadowlength = 0;
+				
+				//inscattering part
+				for (int shadowstep = 0; shadowstep < NumShadowSteps; shadowstep++)
+				{
+					lpos += Cloud.DirectionalLightDirection * Cloud.LightStepSize;
+					//shadowlength += shadowstepsize;
+					float lsample = SampleCloudDensity(lpos, Cloud, false);
+					shadowdist += max(0, lsample);
+				}
+				
+				float OpticalDepth = max(0.0, cursample) * Cloud.StepSize;
+				//CloudThickness, exp(-OpticalDepth) -> Remaining Energy, 1- Remaining Energy = Blockness
+				float CloudThickness = 1.0 - exp(-OpticalDepth);
+				
+				// inscattering part
+				// The Higher The Cloud Thickness, The Stronger The Reflection
+				lightenergy += exp(-shadowdist * ShadowDensity * Cloud.LightStepSize) * SunColor * CloudThickness * Transmittance;
+				
+				float4 scattervalues = ScatterDensityOctaves;
+				float4 inScattering = exp(-shadowdist * ShadowDensity * Cloud.LightStepSize * scattervalues);
+				lightenergy += dot(inScattering, ScatterIntensityOctaves) * CloudThickness * SunColor * Transmittance;
+
+				//Sky Lighting
+				lpos = Cloud.pos + normalize(Cloud.pos) * Cloud.StepSize;
+				float lsample = SampleCloudDensity(lpos, Cloud, false);
+				shadowdist = lsample;
+				lpos = Cloud.pos + normalize(Cloud.pos) * Cloud.StepSize * 2.0;
+				lsample = SampleCloudDensity(lpos, Cloud, false);
+				shadowdist += lsample;
+				shadowdist = max(0, shadowdist);
+				lightenergy += exp(-shadowdist * AmbientDensity * Cloud.StepSize) * CloudThickness * SkyColor * Transmittance;
+		
+				// ground bounce
+				shadowdist = max(0, cursample);
+				lpos = Cloud.pos - normalize(Cloud.pos) * Cloud.StepSize;
+				lsample = SampleCloudDensity(lpos, Cloud, false);
+				shadowdist = max(0, lsample);
+				lpos = Cloud.pos - normalize(Cloud.pos) * Cloud.StepSize * 2;
+				lsample = SampleCloudDensity(lpos, Cloud, false);
+				shadowdist += max(0, lsample);
+				shadowdist = max(0, shadowdist);
+				//shadowdist = max(shadowdist, lsample + cursample);
+				
+				lightenergy += exp(-shadowdist * AmbientDensity * Cloud.StepSize) * CloudThickness * GroundColor * Transmittance * dot(0.3, SkyColor);
+				
+				Transmittance *= 1.0 - CloudThickness;
 			}
 
-		 	// If not potentially in the cloud , then set cloud test to zero so that we go back to the cheap sample case .
-			if (6 == ZeroDensitySampleCount)
-			{
-				CloudTest = 0.0;
-				ZeroDensitySampleCount = 0;
-			}
-			Cloud.pos += Cloud.StepSize * Cloud.RayDirection;
+			Cloud.pos += Cloud.RayDirection * Cloud.StepSize;
 		}
 		else
 		{
-			// Sample density the cheap way , only using the low−frequency noise .
-			CloudTest = SampleCloudDensity(Cloud.pos, Cloud, true) ;
-			if (Episilon > abs(CloudTest))
+			// cloud test starts as zero so we always evaluate the
+			// second case from the beginning .
+			if (CloudTest > 0.0)
 			{
-				Cloud.pos += Cloud.StepSize * Cloud.RayDirection ;
+				// Sample density the expensive way, indicating a full sample .
+				float SampleDensity = SampleCloudDensity(Cloud.pos, Cloud, false);
+				HitSamples++;
+				// If we just samples a zero , increment the counter .
+				if(Episilon > abs(SampleDensity))
+				{
+					ZeroDensitySampleCount ++;
+					// If we are doing an expensive sample that is still potentially in the cloud :
+					// if (ZeroDensitySampleCount != 6)
+					// {
+					// 	// SampleCloudDensityAlongCone just walks in the given direction from the start point and takes X number of lighting samples .
+					// 	float DensityAlongLightRay = SampleCloudDensityAlongCone(Cloud.pos, Cloud);
+					// } 
+				}
+				else
+				{
+					float fCurDensity = GetLightTransmittance(SampleDensity * Cloud.StepSize / 1000.0f);
+					Transmittance *= fCurDensity;
+					// Transmittance *= (1.0 - SampleDensity);
+				}
+
+				// If not potentially in the cloud , then set cloud test to zero so that we go back to the cheap sample case .
+				if (6 == ZeroDensitySampleCount)
+				{
+					CloudTest = 0.0;
+					ZeroDensitySampleCount = 0;
+				}
+				Cloud.pos += Cloud.StepSize * Cloud.RayDirection;
 			}
-			else// Hitted, Need to do Another Expensive Sampling At The Same Position
+			else
 			{
-				i--;
+				// Sample density the cheap way , only using the low−frequency noise .
+				CloudTest = SampleCloudDensity(Cloud.pos, Cloud, true) ;
+				// CloudTest = saturate(CloudTest);
+				// return float4(1, 1, 1, 1 - CloudTest);
+				if (Episilon > abs(CloudTest))
+				{
+					Cloud.pos += Cloud.StepSize * Cloud.RayDirection ;
+				}
+				else// Hitted, Need to do Another Expensive Sampling At The Same Position
+				{
+					i--;
+				}
 			}
-			
 		}
 	}
-	return float4(1, 1, 1, 1 - Transmittance);
+
+	if(0.5f >  Cloud.Debug)
+		return float4(1, 1, 1, 1 - Transmittance * Cloud.CloudScaleParams.z);
+	else
+		return float4(lightenergy, 1 - Transmittance * Cloud.CloudScaleParams.z);
+	
 
 // return 1;
 // }

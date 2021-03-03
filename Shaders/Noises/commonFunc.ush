@@ -1,15 +1,19 @@
-// Arbitrary random, can be replaced with a function of your choice
-float rand(float3 pos, int NoiseTexRes, Texture2D WhiteNoise, SamplerState WhiteNoiseSampler)
+
+//3d in, 3d out
+float3 hash3d3(float3 pos)
 {
-    float2 uv = pos.xy + pos.z;
-	// return Texture2DSample(WhiteNoise, WhiteNoiseSampler, uv).r;
-	return Texture2DSample(WhiteNoise, WhiteNoiseSampler, uv / NoiseTexRes).r;
+	pos = float3(dot(pos, float3(127.1, 311.7,  74.7)), 
+			  dot(pos, float3(269.5, 183.3, 246.1)), 
+			  dot(pos, float3(113.5, 271.9, 124.6)));
+
+	return  - 1.0 + 2.0 * frac(sin(pos) * 43758.5453123);
 }
 
 float grad3D(float hash, float3 pos) 
 {
-    float angle = 6.283185 * hash + 4.0 * pos.z * hash;
-    return dot(float2(cos(angle), sin(angle)), pos.xy);
+    return dot(hash, pos);
+    // float angle = 6.283185 * hash + 4.0 * pos.z * hash;
+    // return dot(float2(cos(angle), sin(angle)), pos.xy);
 
     // int h = int(1e4*hash) & 15;
 	// float u = h<8 ? pos.x : pos.y,
@@ -31,78 +35,49 @@ float Remap(float original_value , float original_min, float original_max , floa
     return new_min + ((original_value - original_min) / (original_max - original_min)) * (new_max - new_min);
 }
 
-float fade(float t) 
+float perlin(float3 uvw, int Frequncy, float SliceNum, float Coverage)
 {
-    return t;
-}
-
-float COSInterpolation(float x,float y,float n)
-{
-    return lerp(x, y, n);
-    // float r = n*3.1415926;
-    // float f = (1.0-cos(r))*0.5;
-    // return x*(1.0-f)+y*f;
-}
-
-float perlin(float3 uvw, float SliceNum, float Coverage, int NoiseTexRes, Texture2D WhiteNoise, SamplerState WhiteNoiseSampler)
-{
-    float3 pi = floor(uvw); 
+    uvw *= Frequncy;
+    int3 pi = floor(uvw); 
     float3 pf = uvw - pi;
-    
-    float u = fade(pf.x);
-    float v = fade(pf.y);
-    float w = fade(pf.z);
 
-    // SliceNum = 1.0f;
-    float3 posOffsetArr[8] = 
+    int3 posNoOffsetArr[8] = 
     {
-        float3(0, 0, 0),
-        float3(1.0, 0, 0),
-        float3(0, 1.0, 0),
-        float3(1.0, 1.0, 0),
-        float3(0, 0, 1.0 / SliceNum),
-        float3(1.0, 0, 1.0 / SliceNum),
-        float3(0, 1.0, 1.0 / SliceNum),
-        float3(1.0, 1.0, 1.0 / SliceNum),
-    };
-
-    float3 posNoOffsetArr[8] = 
-    {
-        float3(0.0, 0.0, 0.0),
-        float3(1.0, 0.0, 0.0),
-        float3(0.0, 1.0, 0.0),
-        float3(1.0, 1.0, 0.0),
-        float3(0.0, 0.0, 1.0),
-        float3(1.0, 0.0, 1.0),
-        float3(0.0, 1.0, 1.0),
-        float3(1.0, 1.0, 1.0),
+        int3(0, 0, 0),
+        int3(1, 0, 0),
+        int3(0, 1, 0),
+        int3(1, 1, 0),
+        int3(0, 0, 1),
+        int3(1, 0, 1),
+        int3(0, 1, 1),
+        int3(1, 1, 1),
     };
     
-    return  COSInterpolation( 
-                COSInterpolation( 
-                    COSInterpolation(
-                        grad3D(rand(pi + posNoOffsetArr[0], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[0]),
-                        grad3D(rand(pi + posNoOffsetArr[1], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[1]), 
-                        u ),
-                    COSInterpolation(
-                        grad3D(rand(pi + posNoOffsetArr[2], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[2]), 
-                        grad3D(rand(pi + posNoOffsetArr[3], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[3]), 
-                        u ), 
-                    v ),
-        		 COSInterpolation( 
-                    COSInterpolation( 
-                        grad3D(rand(pi + posNoOffsetArr[4], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[4]), 
-                        grad3D(rand(pi + posNoOffsetArr[5], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[5]), 
-                        u ),
-            		COSInterpolation( 
-                        grad3D(rand(pi + posNoOffsetArr[6], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[6]), 
-                        grad3D(rand(pi + posNoOffsetArr[7], NoiseTexRes, WhiteNoise, WhiteNoiseSampler), pf - posOffsetArr[7]), 
-                        u ), 
-                    v ), 
-                w ) + Coverage;
+    return  lerp( 
+                lerp( 
+                    lerp(
+                        grad3D(hash3d3((pi + posNoOffsetArr[0])%Frequncy), pf - posNoOffsetArr[0]),
+                        grad3D(hash3d3((pi + posNoOffsetArr[1])%Frequncy), pf - posNoOffsetArr[1]), 
+                        pf.x ),
+                    lerp(
+                        grad3D(hash3d3((pi + posNoOffsetArr[2])%Frequncy), pf - posNoOffsetArr[2]), 
+                        grad3D(hash3d3((pi + posNoOffsetArr[3])%Frequncy), pf - posNoOffsetArr[3]), 
+                        pf.x ), 
+                    pf.y ),
+        		 lerp( 
+                    lerp( 
+                        grad3D(hash3d3((pi + posNoOffsetArr[4])%Frequncy), pf - posNoOffsetArr[4]), 
+                        grad3D(hash3d3((pi + posNoOffsetArr[5])%Frequncy), pf - posNoOffsetArr[5]), 
+                        pf.x ),
+            		lerp( 
+                        grad3D(hash3d3((pi + posNoOffsetArr[6])%Frequncy), pf - posNoOffsetArr[6]), 
+                        grad3D(hash3d3((pi + posNoOffsetArr[7])%Frequncy), pf - posNoOffsetArr[7]), 
+                        pf.x ), 
+                    pf.y ), 
+                pf.z ) + Coverage;
 }
 
-float perlinFBM(float3 uvw, int firstOctave, int accumOctaves, int iTime, float TimeScale, float SliceNum, float Coverage, int NoiseTexRes, Texture2D WhiteNoise, SamplerState WhiteNoiseSampler)
+float perlinFBM(float3 uvw, int firstOctave, int accumOctaves, int iTime, float TimeScale, float SliceNum, float Coverage)
 {
     float sum = 0.0;
     float frequency = pow(2, firstOctave);
@@ -111,7 +86,7 @@ float perlinFBM(float3 uvw, int firstOctave, int accumOctaves, int iTime, float 
     for(int i=firstOctave; i < firstOctave + accumOctaves;i++)
     {
 		uvw += iTime * TimeScale;
-        sum += perlin(uvw * frequency, SliceNum, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler) * amplitude;
+        sum += perlin(uvw, frequency, SliceNum, Coverage) * amplitude;
         frequency *= 2.0;
         amplitude *= persistence;
     }
@@ -149,77 +124,10 @@ float ramp(float r)
     return smooth_step((r+1)/2)*2-1; 
 }
 
-float potential(float3 uvw, int firstOctave, int accumOctaves, int iTime, float TimeScale, float SliceNum, float Coverage, int NoiseTexRes, Texture2D WhiteNoise, SamplerState WhiteNoiseSampler)
+float potential(float3 uvw, int firstOctave, int accumOctaves, int iTime, float TimeScale, float SliceNum, float Coverage)
 {
-    float noise = perlinFBM(uvw, firstOctave, accumOctaves, iTime, TimeScale, SliceNum, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
+    float noise = perlinFBM(uvw, firstOctave, accumOctaves, iTime, TimeScale, SliceNum, Coverage);
     return abs(1 - 2 * noise);
-
-    float x = uvw.x;
-    float y = uvw.y;
-    
-    float background_flow_speed = -0.25;
-    float disc_radius = 0.12;
-    float disc_influence = 0.25;
-    float2 disc = float2(0.7, 0.5);
-    float wake_expansion = 0.3;
-    float noise_gain[3] = 
-    {
-        0.03,
-        0.03*0.35,
-        0.03*0.1
-    };
-    float noise_lengthscale[3] = 
-    {
-        0.1f, 0.06, 0.026
-    };
-
-    // begin with background laminary flow (adjusted so zero level goes through centre of disc)
-    float p = -background_flow_speed * (y - disc.y);
-    // modify for disc
-    float d = length(float2(x,y));
-
-    if(d < disc_influence)
-    {
-        p *= ramp(d / disc_influence);
-    }
-    // add turbulent wake that respects disc
-    float wake_x = smooth_step(1 - (x - disc.x) / disc_radius);
-    if(wake_x > 0)
-    {
-        float wake_y = smooth_step(1 - abs(y - disc.y) / (1.5f * disc_radius + wake_expansion * (disc.x - x)));
-        if(wake_y > 0)
-        {
-            float wake = wake_x * wake_y;
-            float s = 0;
-            for(int i = 0; i < 3; ++i)
-            {
-                s += ramp( d / noise_lengthscale[i]) * noise_gain[i] * 
-                    perlinFBM(float3(( x - background_flow_speed * iTime * TimeScale) / noise_lengthscale[i], y / noise_lengthscale[i], 0), firstOctave, accumOctaves, iTime, TimeScale, SliceNum, Coverage, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
-            }
-            p += wake * s;
-        }
-    }
-    return p;
-}
-
-// Returns the point in a given cell
-float3 get_cell_point(float3 cell, int CellNum, int NoiseTexRes, Texture2D WhiteNoise, SamplerState WhiteNoiseSampler) 
-{
-	float3 cell_base = cell / CellNum;
-	float noise_x = rand(cell.xyz, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
-    float noise_y = rand(cell.yzx, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
-    float noise_z = rand(cell.zxy, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
-    return cell_base + (0.5 + 1.5 * float3(noise_x, noise_y, noise_z)) / CellNum;
-}
-
-//3d in, 3d out
-float3 hash3d3(float3 pos)
-{
-	pos = float3(dot(pos, float3(127.1, 311.7,  74.7)), 
-			  dot(pos, float3(269.5, 183.3, 246.1)), 
-			  dot(pos, float3(113.5, 271.9, 124.6)));
-
-	return  - 1.0 + 2.0 * frac(sin(pos) * 43758.5453123);
 }
 
 // Performs worley noise by checking all adjacent cells
