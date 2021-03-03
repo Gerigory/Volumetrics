@@ -3,7 +3,7 @@
     for (int i = firstOctave; i < firstOctave + accumOctaves; i++)
     {
         uvw += iTime * 0.04;
-        value += worley(uvw * frequency, CellNum, NoiseTexRes, WhiteNoise, WhiteNoiseSampler) / frequency;
+        value += worley(uvw * frequency) / frequency;
 		frequency *= 2.0;
     }
 	return clamp(value * saturateness, 0.0, 1.0);

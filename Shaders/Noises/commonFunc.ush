@@ -212,23 +212,39 @@ float3 get_cell_point(float3 cell, int CellNum, int NoiseTexRes, Texture2D White
     return cell_base + (0.5 + 1.5 * float3(noise_x, noise_y, noise_z)) / CellNum;
 }
 
-// https://www.shadertoy.com/view/MstGRl
+//3d in, 3d out
+float3 hash3d3(float3 pos)
+{
+	pos = float3(dot(pos, float3(127.1, 311.7,  74.7)), 
+			  dot(pos, float3(269.5, 183.3, 246.1)), 
+			  dot(pos, float3(113.5, 271.9, 124.6)));
+
+	return  - 1.0 + 2.0 * frac(sin(pos) * 43758.5453123);
+}
+
 // Performs worley noise by checking all adjacent cells
 // and comparing the distance to their points
-float worley(float3 coord, int CellNum, int NoiseTexRes, Texture2D WhiteNoise, SamplerState WhiteNoiseSampler)
+float worley(float3 coord, int CellNum)
 {
-    float3 cell = floor(coord * CellNum);
-    float dist = 10000.0;
+    float3 cell = coord * CellNum;
+    float3 intPos = floor(cell);
+    float3 fracPos = frac(cell);
+    float dist = 125.0;
     
     // Search in the surrounding 5x5x5 cell block
-    for (int x = 0; x < 5; x++) 
+    const int Range = 2;
+    for (int x = -Range; x <= Range; x++) 
 	{ 
-        for (int y = 0; y < 5; y++) 
+        for (int y = -Range; y <= Range; y++) 
 		{
-			for(int z = 0; z < 5; z++)
+			for(int z = -Range; z <= Range; z++)
 			{
-				float3 cell_point = get_cell_point(cell + float3(x-2, y-2, z-2), CellNum, NoiseTexRes, WhiteNoise, WhiteNoiseSampler);
-				dist = min(dist, length(cell_point - coord));
+                float3 CellIndex = intPos + float3(x, y, z);
+                //To Make Noise Successive In All Dirctions
+                CellIndex = frac((CellIndex + float(CellNum)) / CellNum)*CellNum;
+				float D = distance(hash3d3(CellIndex) + float3(x, y, z), fracPos);
+                // take the feature point with the minimal distance
+                dist = min(dist, D);
 			}
         }
     }
