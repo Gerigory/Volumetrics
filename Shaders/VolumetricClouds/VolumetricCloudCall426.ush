@@ -1,0 +1,27 @@
+#pragma once
+
+CloudSceneMaker CloudMaker;
+CloudScene Clouds = CloudMaker.MakeCloudLayer(
+    WorldPosition, 
+    ErosionExp, 
+    ErosionMax, 
+    ErosionNewMin, 
+    ErosionStrength, 
+    ErosionNoiseScale, 
+    Time, 
+    BaseNoiseExp, 
+    BaseNoiseScale, 
+    VolumeShapeTex, 
+    VolumeShapeTexSampler, 
+    VolumeErosionTex, 
+    VolumeErosionTexSampler, 
+    NoiseHeightExp, 
+    NoiseHeightRange, 
+    WindVector,
+    ErosionScale);
+
+return Render(Clouds, Parameters);
+
+
+// #include "/Shaders/VolumetricClouds/VolumetricCloudCall.ush"
+// return 1;

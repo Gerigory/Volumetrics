@@ -154,7 +154,7 @@ float3 GetSampleUVW(float3 pos, float UVScale, float CloudTileSize)
 {
 	// pos.z = length(pos) - PlanetRadius;//Position Altitude
 	float3 PosInKm = pos / 1000.0f;
-	float3 PWNoiseUVW = PosInKm / float3(CloudTileSize, CloudTileSize*0.8, CloudTileSize) * UVScale;
+	float3 PWNoiseUVW = PosInKm / float3(CloudTileSize, CloudTileSize, CloudTileSize) * UVScale;
 	// float3 PWNoiseUVW = PosInKm / CloudTileSize * UVScale;
 	// return frac(PWNoiseUVW);
 	return PWNoiseUVW;
@@ -202,6 +202,7 @@ float SampleCloudDensity(float3 pos, CloudScene Cloud, bool SampleUsingCheapWay)
 	// define the base cloud shape by dilating it with the
 	// low-frequency FBM made of Worley noise.
 	float BaseCloud = RangeRemap(PWNoise.r, -(1.0 - low_freq_FBM) , 1.0 , 0.0 , 1.0);
+	// BaseCloud = PWNoise.r + low_freq_FBM * 0.3;
 
 	// Get the density-height gradient using the density height
 	// function explained in Section 2.2 .
@@ -212,18 +213,22 @@ float SampleCloudDensity(float3 pos, CloudScene Cloud, bool SampleUsingCheapWay)
 
 	// Apply the height function to the base cloud shape .
 	BaseCloud *= DensityHeightGradient;
+	// if(0.5f <  Cloud.Debug)
+	// 	return BaseCloud * Cloud.DensityScale;
 
 	// Base Cloud Coverage Tunning -----------------------------------------
 	// Cloud coverage is stored in weather data’s red channel .
-	float cloud_coverage = WeatherData.r;
+	float cloud_coverage = 1 - WeatherData.r;
 
 	// Use remap to apply the cloud coverage attribute
 	float BaseCloudWithCoverage = BaseCloud;
-	BaseCloudWithCoverage = RangeRemap(BaseCloud, cloud_coverage * Cloud.CloudMinMax.w, 1.0, 0.0, 1.0);
+	BaseCloudWithCoverage = RangeRemap(BaseCloud, -cloud_coverage * Cloud.CloudMinMax.w, 1.0, 0.0, 1.0);
 	// return BaseCloudWithCoverage;
 	// Multiply the result by the cloud coverage attribute so
 	// that smaller clouds are lighter and more aesthetically pleasing .
 	BaseCloudWithCoverage *= cloud_coverage;
+	if(0.5f <  Cloud.Debug)
+		return BaseCloudWithCoverage * Cloud.DensityScale;
 
 	// Cloud Detail Add -----------------------------------------
 	if(!SampleUsingCheapWay)
@@ -243,7 +248,7 @@ float SampleCloudDensity(float3 pos, CloudScene Cloud, bool SampleUsingCheapWay)
 
 		// Erode the base cloud shape with the distorted high-frequency Worley noises .
 		float final_cloud = BaseCloudWithCoverage;
-		// if(0.5f >  Cloud.Debug)
+		if(0.5f >  Cloud.Debug)
 			final_cloud = RangeRemap(BaseCloudWithCoverage, high_freq_noise_modifier * 0.2 , 1.0 , 0.0 , 1.0);
 
 		return final_cloud * Cloud.DensityScale;
@@ -369,7 +374,7 @@ float4 CloudRendering(CloudScene Cloud)
 				float CloudThickness = 1.0 - exp(-OpticalDepth);
 				
 				// inscattering part
-				// The Higher The Cloud Thickness, The Stronger The Reflection
+				// The Higher The Cloud Thickness, The Stronger The Reflection?
 				lightenergy += exp(-shadowdist * ShadowDensity * Cloud.LightStepSize) * SunColor * CloudThickness * Transmittance;
 				
 				float4 scattervalues = ScatterDensityOctaves;
@@ -460,7 +465,8 @@ float4 CloudRendering(CloudScene Cloud)
 	if(0.5f >  Cloud.Debug)
 		return float4(1, 1, 1, 1 - Transmittance * Cloud.CloudScaleParams.z);
 	else
-		return float4(lightenergy, 1 - Transmittance * Cloud.CloudScaleParams.z);
+		return float4(1, 1, 1, 1 - Transmittance * Cloud.CloudScaleParams.z);
+		// return float4(lightenergy, 1 - Transmittance * Cloud.CloudScaleParams.z);
 	
 
 // return 1;

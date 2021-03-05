@@ -1,0 +1,121 @@
+#pragma once
+#define Episilon 1e-6
+
+struct CloudScene
+{
+	//Params from Custom Node Input
+    float3 WorldPosition;
+    float ErosionExp;
+    float ErosionMax;
+    float ErosionNewMin;
+    float ErosionStrength;
+    float ErosionNoiseScale;
+    float Time;
+    float BaseNoiseExp;
+    float BaseNoiseScale;
+    Texture3D VolumeShapeTex;
+    SamplerState VolumeShapeTexSampler;
+    Texture3D VolumeErosionTex;
+    SamplerState VolumeErosionTexSampler;
+    float NoiseHeightExp;
+    float NoiseHeightRange;
+    float3 WindVector;	
+    float ErosionScale;	
+};
+
+float3 RangeRemap(float3 OrginalVal, float OrginalMin, float OrginalMax, float NewMin, float NewMax)
+{
+	float OrginalRange = max(OrginalMax - OrginalMin, Episilon);
+	float NewRange = NewMax - NewMin;
+	float3 ValueOffset = OrginalVal - OrginalMin;
+	float3 OriginalScale = saturate(ValueOffset / OrginalRange);
+	float3 RemappedVal = NewMin +  OriginalScale * NewRange;
+	return RemappedVal;
+}
+
+float3 Render(CloudScene Cloud, FMaterialPixelParameters Parameters)
+{
+	float3 ErosedPos = Cloud.WorldPosition * Cloud.ErosionNoiseScale;
+	float3 WindVector = Cloud.Time * Cloud.WindVector;
+
+	float3 ErosionWindOffset = WindVector * -0.1;
+	float3 ErosionSamplePos = ErosedPos + ErosionWindOffset;
+	float3 ErosionUVW = ErosionSamplePos * Cloud.ErosionScale;
+	float ErosionNoise = Cloud.VolumeErosionTex.SampleLevel(Cloud.VolumeErosionTexSampler, ErosionUVW, 0).r;
+	float ErosionNoiseExp = pow(ErosionNoise, Cloud.ErosionExp);
+	float HighFreqNoise = ErosionNoiseExp * Cloud.ErosionStrength;
+
+	float3 ShapeWindOffset = WindVector * 0.15;
+	float3 WindErosedPos = ErosedPos + ShapeWindOffset;
+	float3 ShapeSampleUVW = WindErosedPos * Cloud.BaseNoiseScale;
+	float3 BaseShapeCol = Cloud.VolumeShapeTex.SampleLevel(Cloud.VolumeShapeTexSampler, ShapeSampleUVW, 0).r;
+	float3 NoisedBaseShape = saturate(pow(BaseShapeCol, Cloud.BaseNoiseExp));
+#if CLOUD_LAYER_PIXEL_SHADER
+	float ConservativeDensity = Parameters.VolumeSampleConservativeDensity;
+	float AltitudeInLayer = Parameters.CloudSampleNormAltitudeInLayer;
+#else
+	float ConservativeDensity = float3(0.0f, 0.0f, 0.0f);
+	float AltitudeInLayer = 0.0f;
+#endif
+	float3 BaseShape = NoisedBaseShape * ConservativeDensity;
+
+	float3 ModifiedBaseShape = RangeRemap(BaseShape, HighFreqNoise, Cloud.ErosionMax, Cloud.ErosionNewMin, Cloud.ErosionMax).r;
+
+	float HeightAltitude = saturate(AltitudeInLayer * Cloud.NoiseHeightRange);
+	float HeightExp = pow(HeightAltitude, Cloud.NoiseHeightExp); 
+	float3 BlendedBaseShape = lerp(BaseShape, ModifiedBaseShape, HeightExp);
+	return BlendedBaseShape;
+}
+
+struct CloudSceneMaker
+{
+	
+	CloudScene NewClouds;
+	
+	CloudScene MakeCloudLayer(
+		float3 WorldPosition,
+		float ErosionExp,
+		float ErosionMax,
+		float ErosionNewMin,
+		float ErosionStrength,
+		float ErosionNoiseScale,
+		float Time,
+		float BaseNoiseExp,
+		float BaseNoiseScale,
+		Texture3D VolumeShapeTex,
+		SamplerState VolumeShapeTexSampler,
+		Texture3D VolumeErosionTex,
+		SamplerState VolumeErosionTexSampler,
+		float NoiseHeightExp,
+		float NoiseHeightRange,
+		float3 WindVector,	
+		float ErosionScale)
+	{
+		NewClouds.WorldPosition = WorldPosition;		
+		NewClouds.ErosionExp = ErosionExp;
+		NewClouds.ErosionMax = ErosionMax;
+		NewClouds.ErosionNewMin = ErosionNewMin;		
+		NewClouds.ErosionStrength = ErosionStrength;	
+		NewClouds.ErosionNoiseScale = ErosionNoiseScale;		
+		NewClouds.Time = Time;		
+		NewClouds.BaseNoiseExp = BaseNoiseExp;
+		NewClouds.BaseNoiseScale = BaseNoiseScale;	
+		NewClouds.VolumeShapeTex = VolumeShapeTex;
+		NewClouds.VolumeShapeTexSampler = VolumeShapeTexSampler;		
+		NewClouds.VolumeErosionTex = VolumeErosionTex;
+		NewClouds.VolumeErosionTexSampler = VolumeErosionTexSampler;			
+		NewClouds.NoiseHeightExp = NoiseHeightExp;	
+		NewClouds.NoiseHeightRange = NoiseHeightRange;		
+		NewClouds.WindVector = WindVector;
+		NewClouds.ErosionScale = ErosionScale;
+		
+		return NewClouds;
+	}
+};
+
+float EmptyFunction()
+{
+	return 1.0f;
+// return 1;
+// }
+// #include "/Shaders/VolumetricClouds/VolumetricCloudFunctions.ush"

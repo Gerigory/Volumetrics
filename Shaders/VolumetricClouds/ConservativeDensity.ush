@@ -1,0 +1,26 @@
+#pragma once
+
+float3 OffsetPos = 500000.0 + WorldPos;
+float2 PosUV = OffsetPos.xy * WeatherUVScale;
+float2 WeatherUV = PosUV * WeatherUVScale;
+float2 WeatherData = WeatherTexture.SampleLevel(WeatherTextureSampler, WeatherUV, 0).rg;
+float Density = pow(WeatherData.r, 1.0);
+float CloudType = pow(WeatherData.g, 0.25);
+#if CLOUD_LAYER_PIXEL_SHADER
+	float AltitudeInLayer = Parameters.CloudSampleNormAltitudeInLayer;
+#else
+	float AltitudeInLayer = 0.0f;
+#endif
+
+float2 HeightGradientUV = float2(CloudType, 1.0 - AltitudeInLayer);
+float HeightGradient = GradientTexture.SampleLevel(GradientTextureSampler, HeightGradientUV, 0).r;
+float HeightDensity = Density * HeightGradient;
+
+if(AltitudeInLayer < 0.05 || AltitudeInLayer > 0.95)
+{
+   HeightDensity = 0.0;
+}
+
+return HeightDensity;
+// #include "/Shaders/VolumetricClouds/VolumetricCloudCall.ush"
+// return 1;
