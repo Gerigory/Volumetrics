@@ -190,18 +190,27 @@ float SampleCloudDensity(float3 pos, CloudScene Cloud, bool SampleUsingCheapWay)
 
 	// Read the low-frequency Perlin-Worley and Worley noises .
 	float3 PWNoiseUVW = GetSampleUVW(pos, Cloud.CloudScaleParams.x, Cloud.CloudMinMax.z);
+	// if(0.5f <  Cloud.Debug)
+	// 	PWNoiseUVW = saturate(PWNoiseUVW);
 	// r -> perlin noise, g -> low frequency pw noise, b -> high frequency pw noise
 	float3 RayStartDistance = distance(pos, Cloud.RayOrigin);
 	float MipLevel = GetMipLevel(RayStartDistance, 1.0, 1, Cloud.VolumeResolution, Cloud.ViewSize);
+	if(0.5f <  Cloud.Debug)
+		MipLevel = 0;
 	float2 PWNoise = Cloud.PWNoiseTex.SampleLevel(Cloud.PWNoiseTexSampler, PWNoiseUVW, MipLevel).rg;
 
 	// Build an FBM out of the low frequency Worley noises  that can be used to add detail to the 
 	// low-frequency Perlin-Worley noise .
-	float low_freq_FBM = PWNoise.g;
+	float low_freq_FBM = PWNoise.g * Cloud.CloudScaleParams.w;
 
 	// define the base cloud shape by dilating it with the
 	// low-frequency FBM made of Worley noise.
 	float BaseCloud = RangeRemap(PWNoise.r, -(1.0 - low_freq_FBM) , 1.0 , 0.0 , 1.0);
+	if(0.5f <  Cloud.Debug)
+		return BaseCloud * Cloud.DensityScale;
+
+	// if(0.5f <  Cloud.Debug)
+	// 	BaseCloud = RangeRemap(PWNoise.r, -(1.0 - low_freq_FBM) , 1.0 , 0.0 , 1.0);
 	// BaseCloud = PWNoise.r + low_freq_FBM * 0.3;
 
 	// Get the density-height gradient using the density height
@@ -213,8 +222,8 @@ float SampleCloudDensity(float3 pos, CloudScene Cloud, bool SampleUsingCheapWay)
 
 	// Apply the height function to the base cloud shape .
 	BaseCloud *= DensityHeightGradient;
-	// if(0.5f <  Cloud.Debug)
-	// 	return BaseCloud * Cloud.DensityScale;
+	if(0.5f <  Cloud.Debug)
+		return BaseCloud * Cloud.DensityScale;
 
 	// Base Cloud Coverage Tunning -----------------------------------------
 	// Cloud coverage is stored in weather data’s red channel .
@@ -369,7 +378,9 @@ float4 CloudRendering(CloudScene Cloud)
 					shadowdist += max(0, lsample);
 				}
 				
-				float OpticalDepth = max(0.0, cursample) * Cloud.StepSize;
+				float OpticalDepth = cursample * Cloud.StepSize;
+				if(0.5f <  Cloud.Debug)
+					OpticalDepth = cursample * Cloud.StepSize;
 				//CloudThickness, exp(-OpticalDepth) -> Remaining Energy, 1- Remaining Energy = Blockness
 				float CloudThickness = 1.0 - exp(-OpticalDepth);
 				
