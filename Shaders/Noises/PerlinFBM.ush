@@ -1,13 +1,2 @@
-    float sum = 0.0;
-    float frequency = pow(2, firstOctave);
-	const float persistence = 0.6;
-    float amplitude = pow(persistence, firstOctave);
-    for(int i=firstOctave; i < firstOctave + accumOctaves;i++)
-    {
-		uvw -= iTime * TimeScale;
-        sum += perlin(uvw, frequency, SliceNum, Coverage) * amplitude;
-        frequency *= 2.0;
-        amplitude *= persistence;
-    }
-	return sum;
+    return perlinFBM(uvw, firstOctave, accumOctaves, iTime, TimeScale, Coverage);
     

@@ -26,7 +26,7 @@ float3 pos = RayOrigin + RayStartDistance * RayDirection;//unit in meter
 
 CloudScene Cloud;
 Cloud.pos = pos; 
-Cloud.DensityScale = DensityScale; 
+Cloud.WeatherParams = WeatherParams; 
 Cloud.LightStepSize = LightStepSize;
 Cloud.DirectionalLightDirection = ResolvedView.DirectionalLightDirection;
 Cloud.CloudMinMax = CloudMinMax; 

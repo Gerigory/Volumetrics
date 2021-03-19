@@ -7,7 +7,7 @@
 struct CloudScene
 {
 	float3 pos;
-	float DensityScale;
+	float4 WeatherParams;
 	float LightStepSize;
 	float3 DirectionalLightDirection;
 	float4 CloudMinMax;
@@ -17,23 +17,23 @@ struct CloudScene
 	float2 ViewSize;
 	float MaxSteps;
 	float StepSize;
-	Texture3D PWNoiseTex; 
+	Texture3D PWNoiseTex;
 	SamplerState PWNoiseTexSampler;
-	Texture2D CurlNoiseTex; 
+	Texture2D CurlNoiseTex;
 	SamplerState CurlNoiseTexSampler;
-	Texture2D WeatherTex; 
+	Texture2D WeatherTex;
 	SamplerState WeatherTexSampler;
-	Texture2D HeightLUTTex;  
+	Texture2D HeightLUTTex;
 	SamplerState HeightLUTTexSampler;
 	float3 RayDirection;
 	float3 Tangent;//X Direction Tangent
 	float3 BiTangent;//Y Direction Tangent
 	float3 SphereOrigin;
-	float3 RayOrigin;	
-	float Debug;	
+	float3 RayOrigin;
+	float Debug;
 };
 
-// find the intersection distance from camera of 
+// find the intersection distance from camera of
 // ray direction with sphere with radius = inRadius
 // @ float3 RayOrigin: Ray Origin -> Camera Pos From Planet Center
 // @ float3 RayDirection: revert of Camera Look At Dir
@@ -44,12 +44,12 @@ float3 SphereIntersection(float3 RayOrigin, float3 RayDirection, float inRadius,
 	float B = dot(RayDirection, RayOrigin);//cos(theta), theta -> angle between raydirection & planetcenter-camera ray
 	float C = dot(RayOrigin, RayOrigin) - inRadius * inRadius;
 
-	// binomial root 
+	// binomial root
 	// B^2 - C = R^2 - (RO^2 - B^2)
 	// RO^2 - B^2 -> min distance from planet center to camera ray
 	float t0 = -B - sqrt(B * B - C);
 	float t1 = -B + sqrt(B * B - C);
-	
+
 	//intersection with backward position, make it zero
 	t0 = max(t0, 0);
 	//intersection with a object, make it stop at the position
@@ -61,22 +61,22 @@ float3 SphereIntersection(float3 RayOrigin, float3 RayDirection, float inRadius,
 float2 GetCloudIntersection(float EarthRadius, float2 inCloudMinMax, float3 RayOrigin, float3 RayDirection, float SceneDepth)
 {
 	float CloudLayerAltitude = inCloudMinMax.x;
-	float CloudLayerThickness = inCloudMinMax.y - inCloudMinMax.x;
+	float CloudLayerThickness = max(inCloudMinMax.y - inCloudMinMax.x, 0.1f);
 
 	float LayerABottom = EarthRadius + CloudLayerAltitude;
 	float LayerATop = LayerABottom + CloudLayerThickness;
-	
+
 	float3 PlanetOuter = SphereIntersection(RayOrigin, RayDirection, EarthRadius, SceneDepth);
-	
+
 	//Hit Planet First, Use Distance As New SceneDepth
 	if( PlanetOuter.x > Episilon && SceneDepth > PlanetOuter.x )
 	{
 		SceneDepth = PlanetOuter.x;
 	}
-	
+
 	float3 LayerAOuter = SphereIntersection(RayOrigin, RayDirection, LayerATop, SceneDepth);
 	float3 LayerAInner = SphereIntersection(RayOrigin, RayDirection, LayerABottom, SceneDepth);
-	
+
 	float cloudentry = LayerAOuter.x;
 	float cloudexit = LayerAOuter.y;
 	float2 CloudRange = 0.0f;
@@ -117,14 +117,13 @@ float GetHeightFractionForPoint(float3 inPosition, float PlanetRadius, float4 in
 {
 	inPosition.z = length(inPosition) - PlanetRadius;//Position Altitude
 	// Get global fractional position in cloud zone .
-	float HeightFraction = (inPosition.z / 1000.0f - inCloudMinMax.x) /(inCloudMinMax.y - inCloudMinMax.x);
-	return saturate(HeightFraction);
+	return saturate((inPosition.z / 1000.0f - inCloudMinMax.x) /max((inCloudMinMax.y - inCloudMinMax.x), 0.1f));
 }
 
 // Get The Mip Level of Cloud Shape Texture(PWNoiseTex)
-// @ float RayDistance, Distance of Intersection Point From Camera of Current Ray 
-// @ float TanHalfFOV, 
-// @ float RepeatSize, 
+// @ float RayDistance, Distance of Intersection Point From Camera of Current Ray
+// @ float TanHalfFOV,
+// @ float RepeatSize,
 // @ float VolumeResolution, Cloud Shape Texture Resolution
 // @ float2 ViewSize, Screen Size
 float GetMipLevel(float RayDistance, float TanHalfFOV, float RepeatSize, float VolumeResolution, float2 ViewSize)
@@ -137,13 +136,16 @@ float GetDensityHeightGradientForPoint(float HeightFraction, float3 WeatherData,
 {
 	float y = 1 - HeightFraction;//flip y
 	float3 HeightLUT = HeightLUTTex.SampleLevel(HeightLUTTexSampler, float2(0, y), 0).rgb;
+
+	return (WeatherData.b <= 0.5) * lerp(HeightLUT.z, HeightLUT.y, WeatherData.b * 2.0) + 
+		(WeatherData.b > 0.5) * lerp(HeightLUT.y, HeightLUT.x, WeatherData.b * 2.0 - 1.0);
 	int CloudType = round(saturate(WeatherData.b) * 2 );// 0 for stratus, 1 for stratucumulous, 2 for cumulous
 	if(0 == CloudType)
-		return HeightLUT.x;
-	else if(0 == CloudType)
+		return HeightLUT.z;
+	else if(1 == CloudType)
 		return HeightLUT.y;
 	else
-		return HeightLUT.z;
+		return HeightLUT.x;
 }
 
 // Get The Texture Sample UV
@@ -199,49 +201,57 @@ float SampleCloudDensity(float3 pos, CloudScene Cloud, bool SampleUsingCheapWay)
 		MipLevel = 0;
 	float2 PWNoise = Cloud.PWNoiseTex.SampleLevel(Cloud.PWNoiseTexSampler, PWNoiseUVW, MipLevel).rg;
 
-	// Build an FBM out of the low frequency Worley noises  that can be used to add detail to the 
-	// low-frequency Perlin-Worley noise .
-	float low_freq_FBM = PWNoise.g * Cloud.CloudScaleParams.w;
+	// Suitable Cloud.WeatherParams.g = 1.0
+	// if(0.5f <  Cloud.Debug)
+	// 	return PWNoise.r * Cloud.WeatherParams.g;
 
+	// Build an FBM out of the low frequency Worley noises  that can be used to add detail to the
+	// low-frequency Perlin-Worley noise .
+	float low_freq_FBM = PWNoise.g * Cloud.CloudScaleParams.w;//HFScale
+	
 	// define the base cloud shape by dilating it with the
 	// low-frequency FBM made of Worley noise.
 	float BaseCloud = RangeRemap(PWNoise.r, -(1.0 - low_freq_FBM) , 1.0 , 0.0 , 1.0);
-	if(0.5f <  Cloud.Debug)
-		return BaseCloud * Cloud.DensityScale;
 
+	// Suitable Cloud.WeatherParams.g = 1.0
 	// if(0.5f <  Cloud.Debug)
-	// 	BaseCloud = RangeRemap(PWNoise.r, -(1.0 - low_freq_FBM) , 1.0 , 0.0 , 1.0);
-	// BaseCloud = PWNoise.r + low_freq_FBM * 0.3;
+	// 	return BaseCloud * Cloud.WeatherParams.g;
 
 	// Get the density-height gradient using the density height
 	// function explained in Section 2.2 .
-	float2 WeatherUVW = GetSampleUVW(pos, 1.0,  Cloud.CloudMinMax.z).rg;
+	float2 WeatherUVW = GetSampleUVW(pos, Cloud.WeatherParams.r,  Cloud.CloudMinMax.z).rg;
 	float3 WeatherData = Cloud.WeatherTex.SampleLevel(Cloud.WeatherTexSampler, WeatherUVW, 0).rgb;
 
 	float DensityHeightGradient = GetDensityHeightGradientForPoint(HeightFraction, WeatherData, Cloud.HeightLUTTex,  Cloud.HeightLUTTexSampler);
 
 	// Apply the height function to the base cloud shape .
 	BaseCloud *= DensityHeightGradient;
-	if(0.5f <  Cloud.Debug)
-		return BaseCloud * Cloud.DensityScale;
+
+	// if(0.5f <  Cloud.Debug)
+	// 	return BaseCloud * Cloud.WeatherParams.g;
 
 	// Base Cloud Coverage Tunning -----------------------------------------
 	// Cloud coverage is stored in weather data’s red channel .
-	float cloud_coverage = 1 - WeatherData.r;
+	float cloud_coverage = WeatherData.r;
+	// Suitable Cloud.WeatherParams.g = 1.1
+	// if(0.5f <  Cloud.Debug)
+	// 	return BaseCloud * Cloud.WeatherParams.g * cloud_coverage;
 
 	// Use remap to apply the cloud coverage attribute
 	float BaseCloudWithCoverage = BaseCloud;
-	BaseCloudWithCoverage = RangeRemap(BaseCloud, -cloud_coverage * Cloud.CloudMinMax.w, 1.0, 0.0, 1.0);
+	//Cloud.CloudMinMax.w - coveragescale
+	BaseCloudWithCoverage = RangeRemap(BaseCloud, cloud_coverage * Cloud.CloudMinMax.w, 1.0, 0.0, 1.0);
 	// return BaseCloudWithCoverage;
 	// Multiply the result by the cloud coverage attribute so
 	// that smaller clouds are lighter and more aesthetically pleasing .
 	BaseCloudWithCoverage *= cloud_coverage;
-	if(0.5f <  Cloud.Debug)
-		return BaseCloudWithCoverage * Cloud.DensityScale;
+	// Suitable Cloud.WeatherParams.g = 1.1
+	// if(0.5f <  Cloud.Debug)
+	// 	return BaseCloudWithCoverage * Cloud.WeatherParams.g;
 
 	// Cloud Detail Add -----------------------------------------
 	if(!SampleUsingCheapWay)
-	{	
+	{
 		// curl noise sampling
 		float2 CurlNoise = Cloud.CurlNoiseTex.SampleLevel(Cloud.CurlNoiseTexSampler, PWNoiseUVW.xy, 0).rg;
 
@@ -257,16 +267,15 @@ float SampleCloudDensity(float3 pos, CloudScene Cloud, bool SampleUsingCheapWay)
 
 		// Erode the base cloud shape with the distorted high-frequency Worley noises .
 		float final_cloud = BaseCloudWithCoverage;
-		if(0.5f >  Cloud.Debug)
-			final_cloud = RangeRemap(BaseCloudWithCoverage, high_freq_noise_modifier * 0.2 , 1.0 , 0.0 , 1.0);
+		final_cloud = RangeRemap(BaseCloudWithCoverage, high_freq_noise_modifier * 0.2 , 1.0 , 0.0 , 1.0);
 
-		return final_cloud * Cloud.DensityScale;
+		return final_cloud * Cloud.WeatherParams.g;
 	}
 	else
 	{
-		return BaseCloudWithCoverage * Cloud.DensityScale;
+		return BaseCloudWithCoverage * Cloud.WeatherParams.g;
 	}
-	
+
 }
 
 float HenyeyGreenstein(float3 inLightVector, float3 inViewVector , float inG)
@@ -318,7 +327,7 @@ float SampleCloudDensityAlongCone(float3 pos, CloudScene Cloud)
 		{
 			noiseKer = noise_kernel[i];
 		}
-		
+
 		pos += Cloud.LightStepSize * Cloud.DirectionalLightDirection + (Cloud.LightStepSize * noiseKer * float (i));
 
 		if (DensityAlongCone < 0.3)
@@ -351,6 +360,7 @@ float4 CloudRendering(CloudScene Cloud)
 	float4 ScatterIntensityOctaves = 0.1f;
 	float ShadowDensity = 1.0f;
 	float AmbientDensity = 0.5f;
+	float sumSample = 0.0f;
 	// Start the main ray−march loop .
 	for (int i = 0; i < Cloud.MaxSteps; i++)
 	{
@@ -362,13 +372,14 @@ float4 CloudRendering(CloudScene Cloud)
 		if(0.5f <  Cloud.Debug)
 		{
 			float cursample = SampleCloudDensity(Cloud.pos, Cloud, false);
+			sumSample += cursample;
 			if (cursample > 0)
 			{
 				float3 lpos = Cloud.pos;
 				lpos -= Cloud.DirectionalLightDirection * Cloud.LightStepSize;
 				float shadowdist = 0;
 				float shadowlength = 0;
-				
+
 				//inscattering part
 				for (int shadowstep = 0; shadowstep < NumShadowSteps; shadowstep++)
 				{
@@ -377,17 +388,17 @@ float4 CloudRendering(CloudScene Cloud)
 					float lsample = SampleCloudDensity(lpos, Cloud, false);
 					shadowdist += max(0, lsample);
 				}
-				
+
 				float OpticalDepth = cursample * Cloud.StepSize;
-				if(0.5f <  Cloud.Debug)
-					OpticalDepth = cursample * Cloud.StepSize;
+				// if(0.5f <  Cloud.Debug)
+				// 	OpticalDepth = cursample * Cloud.StepSize;
 				//CloudThickness, exp(-OpticalDepth) -> Remaining Energy, 1- Remaining Energy = Blockness
 				float CloudThickness = 1.0 - exp(-OpticalDepth);
-				
+
 				// inscattering part
 				// The Higher The Cloud Thickness, The Stronger The Reflection?
 				lightenergy += exp(-shadowdist * ShadowDensity * Cloud.LightStepSize) * SunColor * CloudThickness * Transmittance;
-				
+
 				float4 scattervalues = ScatterDensityOctaves;
 				float4 inScattering = exp(-shadowdist * ShadowDensity * Cloud.LightStepSize * scattervalues);
 				lightenergy += dot(inScattering, ScatterIntensityOctaves) * CloudThickness * SunColor * Transmittance;
@@ -401,7 +412,7 @@ float4 CloudRendering(CloudScene Cloud)
 				shadowdist += lsample;
 				shadowdist = max(0, shadowdist);
 				lightenergy += exp(-shadowdist * AmbientDensity * Cloud.StepSize) * CloudThickness * SkyColor * Transmittance;
-		
+
 				// ground bounce
 				shadowdist = max(0, cursample);
 				lpos = Cloud.pos - normalize(Cloud.pos) * Cloud.StepSize;
@@ -412,9 +423,9 @@ float4 CloudRendering(CloudScene Cloud)
 				shadowdist += max(0, lsample);
 				shadowdist = max(0, shadowdist);
 				//shadowdist = max(shadowdist, lsample + cursample);
-				
+
 				lightenergy += exp(-shadowdist * AmbientDensity * Cloud.StepSize) * CloudThickness * GroundColor * Transmittance * dot(0.3, SkyColor);
-				
+
 				Transmittance *= 1.0 - CloudThickness;
 			}
 
@@ -438,7 +449,7 @@ float4 CloudRendering(CloudScene Cloud)
 					// {
 					// 	// SampleCloudDensityAlongCone just walks in the given direction from the start point and takes X number of lighting samples .
 					// 	float DensityAlongLightRay = SampleCloudDensityAlongCone(Cloud.pos, Cloud);
-					// } 
+					// }
 				}
 				else
 				{
@@ -478,7 +489,7 @@ float4 CloudRendering(CloudScene Cloud)
 	else
 		return float4(1, 1, 1, 1 - Transmittance * Cloud.CloudScaleParams.z);
 		// return float4(lightenergy, 1 - Transmittance * Cloud.CloudScaleParams.z);
-	
+
 
 // return 1;
 // }
