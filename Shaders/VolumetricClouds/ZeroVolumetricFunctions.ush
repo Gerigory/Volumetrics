@@ -151,11 +151,11 @@ float GetDensityHeightGradientForPoint(float HeightFraction, float3 WeatherData,
 		(WeatherData.b > 0.5) * lerp(HeightLUT.y, HeightLUT.x, WeatherData.b * 2.0 - 1.0);
 	int CloudType = round(saturate(WeatherData.b) * 2 );// 0 for stratus, 1 for stratucumulous, 2 for cumulous
 	if(0 == CloudType)
-		return HeightLUT.z;
+		return HeightLUT.x;
 	else if(1 == CloudType)
 		return HeightLUT.y;
 	else
-		return HeightLUT.x;
+		return HeightLUT.z;
 }
 
 // Get The Texture Sample UV
@@ -230,8 +230,7 @@ float SampleCloudDensity(float3 pos, CloudScene Cloud, bool SampleUsingCheapWay)
 
 	// Get the density-height gradient using the density height
 	// function explained in Section 2.2 .
-	//Add Offset To Avoid Coverage Center-Cross Artifacts
-	float2 WeatherUV = SampleUVWBase.rg * Cloud.WeatherParams.r + float2(0.17, 0.39);
+	float2 WeatherUV = SampleUVWBase.rg * Cloud.WeatherParams.r;
 	float3 WeatherData = Cloud.WeatherTex.SampleLevel(Cloud.WeatherTexSampler, WeatherUV, 0).rgb;
 
 	float DensityHeightGradient = GetDensityHeightGradientForPoint(HeightFraction, WeatherData, Cloud.HeightLUTTex,  Cloud.HeightLUTTexSampler);
@@ -252,7 +251,7 @@ float SampleCloudDensity(float3 pos, CloudScene Cloud, bool SampleUsingCheapWay)
 	// Use remap to apply the cloud coverage attribute
 	float BaseCloudWithCoverage = BaseCloud;
 	//Cloud.CloudMinMax.w - coveragescale
-	BaseCloudWithCoverage = RangeRemap(BaseCloud, cloud_coverage * Cloud.CloudMinMax.w, 1.0, 0.0, 1.0);
+	BaseCloudWithCoverage = RangeRemap(BaseCloudWithCoverage, cloud_coverage * Cloud.CloudMinMax.w, 1.0, 0.0, 1.0);
 	// return BaseCloudWithCoverage;
 	// Multiply the result by the cloud coverage attribute so
 	// that smaller clouds are lighter and more aesthetically pleasing .
