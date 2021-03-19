@@ -77,7 +77,7 @@ float perlin(float3 uvw, int Frequncy, float Coverage)
                 pf.z ) + Coverage;
 }
 
-float perlinFBM(float3 uvw, int firstOctave, int accumOctaves, int iTime, float TimeScale, float Coverage)
+float perlinFBM(float3 uvw, int firstOctave, int accumOctaves, float fTime, float TimeScale, float Coverage)
 {
     float sum = 0.0;
     float frequency = pow(2, firstOctave);
@@ -85,7 +85,7 @@ float perlinFBM(float3 uvw, int firstOctave, int accumOctaves, int iTime, float 
     float amplitude = pow(persistence, firstOctave);
     for(int i=firstOctave; i < firstOctave + accumOctaves;i++)
     {
-		uvw += iTime * TimeScale;
+		uvw += fTime * TimeScale;
         sum += perlin(uvw, frequency, Coverage) * amplitude;
         frequency *= 2.0;
         amplitude *= persistence;
@@ -125,9 +125,9 @@ float ramp(float r)
     return smooth_step((r+1)/2)*2-1; 
 }
 
-float potential(float3 uvw, int firstOctave, int accumOctaves, int iTime, float TimeScale, float SliceNum, float Coverage)
+float potential(float3 uvw, int firstOctave, int accumOctaves, float fTime, float TimeScale, float SliceNum, float Coverage)
 {
-    float noise = perlinFBM(uvw, firstOctave, accumOctaves, iTime, TimeScale, Coverage);
+    float noise = perlinFBM(uvw, firstOctave, accumOctaves, fTime, TimeScale, Coverage);
     return abs(1 - 2 * noise);
 }
 

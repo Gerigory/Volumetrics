@@ -12,7 +12,7 @@ struct CloudScene
 	float3 DirectionalLightDirection;
 	float4 CloudMinMax;
 	float4 CloudScaleParams;
-	int iTime;
+	int fTime;
 	float VolumeResolution;
 	float2 ViewSize;
 	float MaxSteps;
@@ -32,6 +32,15 @@ struct CloudScene
 	float3 RayOrigin;
 	float Debug;
 };
+
+float3 hash3d3(float3 pos)
+{
+	pos = float3(dot(pos, float3(127.1, 311.7,  74.7)), 
+			  dot(pos, float3(269.5, 183.3, 246.1)), 
+			  dot(pos, float3(113.5, 271.9, 124.6)));
+
+	return  - 1.0 + 2.0 * frac(sin(pos) * 43758.5453123);
+}
 
 // find the intersection distance from camera of
 // ray direction with sphere with radius = inRadius
@@ -150,13 +159,12 @@ float GetDensityHeightGradientForPoint(float HeightFraction, float3 WeatherData,
 
 // Get The Texture Sample UV
 // @ float3 pos, Position in Planetary Space, Planet Center is The Origin
-// @ float UVScale, Detail Scale
 // @ float CloudTileSize, Cloud Repeat Size
-float3 GetSampleUVW(float3 pos, float UVScale, float CloudTileSize)
+float3 GetSampleUVW(float3 pos, float CloudTileSize)
 {
 	// pos.z = length(pos) - PlanetRadius;//Position Altitude
 	float3 PosInKm = pos / 1000.0f;
-	float3 PWNoiseUVW = PosInKm / float3(CloudTileSize, CloudTileSize, CloudTileSize) * UVScale;
+	float3 PWNoiseUVW = PosInKm / float3(CloudTileSize, CloudTileSize, CloudTileSize);
 	// float3 PWNoiseUVW = PosInKm / CloudTileSize * UVScale;
 	// return frac(PWNoiseUVW);
 	return PWNoiseUVW;
@@ -182,16 +190,20 @@ float SampleCloudDensity(float3 pos, CloudScene Cloud, bool SampleUsingCheapWay)
 		float3 CloudMoveVector = HeightFraction * wind_direction * cloud_top_offset ;
 
 		// Animate clouds in wind direction and add a small upward bias to the wind direction .
-		CloudMoveVector +=(wind_direction + float3(0.0 , 0.1 , 0.0)) * Cloud.iTime * cloud_speed;
+		CloudMoveVector +=(wind_direction + float3(0.0 , 0.1 , 0.0)) * Cloud.fTime * cloud_speed;
 
-		pos += Cloud.Tangent * CloudMoveVector.x + Cloud.BiTangent * CloudMoveVector.y + Cloud.RayDirection * CloudMoveVector.z;
+		pos += CloudMoveVector; 
+
+		// pos += Cloud.Tangent * CloudMoveVector.x + Cloud.BiTangent * CloudMoveVector.y + Cloud.RayDirection * CloudMoveVector.z;
 	}
 
 
 	// Base Cloud Modeling -----------------------------------------
 
 	// Read the low-frequency Perlin-Worley and Worley noises .
-	float3 PWNoiseUVW = GetSampleUVW(pos, Cloud.CloudScaleParams.x, Cloud.CloudMinMax.z);
+	float3 SampleUVWBase = GetSampleUVW(pos, Cloud.CloudMinMax.z);
+	//Different UV For Worley Noise To Avoid Tiling Artifacts
+	float3 PWNoiseUVWWorley = SampleUVWBase * Cloud.CloudScaleParams.x + hash3d3(pos* 2.0);//GetSampleUVW(pos, Cloud.CloudMinMax.z);
 	// if(0.5f <  Cloud.Debug)
 	// 	PWNoiseUVW = saturate(PWNoiseUVW);
 	// r -> perlin noise, g -> low frequency pw noise, b -> high frequency pw noise
@@ -199,19 +211,20 @@ float SampleCloudDensity(float3 pos, CloudScene Cloud, bool SampleUsingCheapWay)
 	float MipLevel = GetMipLevel(RayStartDistance, 1.0, 1, Cloud.VolumeResolution, Cloud.ViewSize);
 	if(0.5f <  Cloud.Debug)
 		MipLevel = 0;
-	float2 PWNoise = Cloud.PWNoiseTex.SampleLevel(Cloud.PWNoiseTexSampler, PWNoiseUVW, MipLevel).rg;
+	float PWNoise = Cloud.PWNoiseTex.SampleLevel(Cloud.PWNoiseTexSampler, SampleUVWBase, MipLevel).r;
+	float WorleyLowFreq = Cloud.PWNoiseTex.SampleLevel(Cloud.PWNoiseTexSampler, PWNoiseUVWWorley, MipLevel).g;
 
 	// Suitable Cloud.WeatherParams.g = 1.0
 	// if(0.5f <  Cloud.Debug)
-	// 	return PWNoise.r * Cloud.WeatherParams.g;
+	// 	return PWNoise * Cloud.WeatherParams.g;
 
 	// Build an FBM out of the low frequency Worley noises  that can be used to add detail to the
 	// low-frequency Perlin-Worley noise .
-	float low_freq_FBM = PWNoise.g * Cloud.CloudScaleParams.w;//HFScale
+	float low_freq_FBM = WorleyLowFreq * Cloud.CloudScaleParams.w;//HFScale
 	
 	// define the base cloud shape by dilating it with the
 	// low-frequency FBM made of Worley noise.
-	float BaseCloud = RangeRemap(PWNoise.r, -(1.0 - low_freq_FBM) , 1.0 , 0.0 , 1.0);
+	float BaseCloud = RangeRemap(PWNoise, -(1.0 - low_freq_FBM) , 1.0 , 0.0 , 1.0);
 
 	// Suitable Cloud.WeatherParams.g = 1.0
 	// if(0.5f <  Cloud.Debug)
@@ -219,8 +232,9 @@ float SampleCloudDensity(float3 pos, CloudScene Cloud, bool SampleUsingCheapWay)
 
 	// Get the density-height gradient using the density height
 	// function explained in Section 2.2 .
-	float2 WeatherUVW = GetSampleUVW(pos, Cloud.WeatherParams.r,  Cloud.CloudMinMax.z).rg;
-	float3 WeatherData = Cloud.WeatherTex.SampleLevel(Cloud.WeatherTexSampler, WeatherUVW, 0).rgb;
+	//Add Offset To Avoid Coverage Center-Cross Artifacts
+	float2 WeatherUV = SampleUVWBase.rg * Cloud.WeatherParams.r + float2(0.17, 0.39);
+	float3 WeatherData = Cloud.WeatherTex.SampleLevel(Cloud.WeatherTexSampler, WeatherUV, 0).rgb;
 
 	float DensityHeightGradient = GetDensityHeightGradientForPoint(HeightFraction, WeatherData, Cloud.HeightLUTTex,  Cloud.HeightLUTTexSampler);
 
@@ -253,14 +267,14 @@ float SampleCloudDensity(float3 pos, CloudScene Cloud, bool SampleUsingCheapWay)
 	if(!SampleUsingCheapWay)
 	{
 		// curl noise sampling
-		float2 CurlNoise = Cloud.CurlNoiseTex.SampleLevel(Cloud.CurlNoiseTexSampler, PWNoiseUVW.xy, 0).rg;
+		float2 CurlNoise = Cloud.CurlNoiseTex.SampleLevel(Cloud.CurlNoiseTexSampler, SampleUVWBase.xy * 0.7, 0).rg;
 
 		// Add some turbulence to bottoms of clouds .
 		pos.xy += CurlNoise * (1.0 - HeightFraction);
 
-		PWNoiseUVW = GetSampleUVW(pos, Cloud.CloudScaleParams.y, Cloud.CloudMinMax.z);
+		SampleUVWBase = GetSampleUVW(pos, Cloud.CloudMinMax.z) * Cloud.CloudScaleParams.y;
 		// Sample high-frequency noises .
-		float HighFreqFBM = Cloud.PWNoiseTex.SampleLevel(Cloud.PWNoiseTexSampler, PWNoiseUVW * 0.1 , MipLevel).b;
+		float HighFreqFBM = Cloud.PWNoiseTex.SampleLevel(Cloud.PWNoiseTexSampler, SampleUVWBase * 0.1 , MipLevel).b;
 
 		// Transition from wispy shapes to billowy shapes over height .
 		float high_freq_noise_modifier = lerp(HighFreqFBM, 1.0 - HighFreqFBM , saturate(HeightFraction * 10.0));
