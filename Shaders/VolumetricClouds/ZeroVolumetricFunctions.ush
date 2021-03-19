@@ -8,11 +8,12 @@ struct CloudScene
 {
 	float3 pos;
 	float4 WeatherParams;
+	float4 WindSpeed;
 	float LightStepSize;
 	float3 DirectionalLightDirection;
 	float4 CloudMinMax;
 	float4 CloudScaleParams;
-	int fTime;
+	float fTime;
 	float VolumeResolution;
 	float2 ViewSize;
 	float MaxSteps;
@@ -175,12 +176,11 @@ float SampleCloudDensity(float3 pos, CloudScene Cloud, bool SampleUsingCheapWay)
 	// Get the height fraction for use with blending noise types over height .
 	float HeightFraction = GetHeightFractionForPoint(pos, Cloud.SphereOrigin.z, Cloud.CloudMinMax);
 
-	// Wind Simulation ----------------------------------------- Ignore First
-	if(0.5f > Cloud.Debug)
+	// Wind Simulation ----------------------------------------- 
 	{
 		// Wind settings .
-		float3 wind_direction = float3(1.0 , 0.0 , 0.0);
-		float cloud_speed = 10.0;
+		float3 wind_direction = Cloud.WindSpeed.rgb;
+		float cloud_speed = Cloud.WindSpeed.a * 1000.0;
 
 		// cloud top offset pushes the tops of the clouds along
 		// this wind direction by this many units .
@@ -190,11 +190,9 @@ float SampleCloudDensity(float3 pos, CloudScene Cloud, bool SampleUsingCheapWay)
 		float3 CloudMoveVector = HeightFraction * wind_direction * cloud_top_offset ;
 
 		// Animate clouds in wind direction and add a small upward bias to the wind direction .
-		CloudMoveVector +=(wind_direction + float3(0.0 , 0.1 , 0.0)) * Cloud.fTime * cloud_speed;
+		CloudMoveVector += wind_direction * Cloud.fTime * cloud_speed;
 
 		pos += CloudMoveVector; 
-
-		// pos += Cloud.Tangent * CloudMoveVector.x + Cloud.BiTangent * CloudMoveVector.y + Cloud.RayDirection * CloudMoveVector.z;
 	}
 
 

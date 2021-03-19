@@ -33,6 +33,7 @@ Cloud.CloudMinMax = CloudMinMax;
 Cloud.CloudScaleParams = CloudScaleParams;
 Cloud.fTime = iTime; 
 Cloud.VolumeResolution = VolumeResolution;
+Cloud.WindSpeed = WindSpeed;
 Cloud.ViewSize = ViewSize;
 Cloud.MaxSteps = MaxSteps;
 Cloud.StepSize = StepSize;
