@@ -1,0 +1,16 @@
+float2 v = -1.0 + 2.0 * uv;
+v.x *= ScreenRes.x / ScreenRes.y;
+
+float vign = smoothstep(4.0, 0.6, length(v));
+
+float2 centerToUv = uv - 0.5f;
+
+CloudScene CloudParams;
+CloudParams.RayDir = -Parameters.CameraVector;
+CloudParams.SunDir = ResolvedView.DirectionalLightDirection;
+float3 CamPosInMeters = ResolvedView.WorldCameraOrigin / 100.0f;//from centimeter to meters
+CloudParams.RayOrigin = CamPosInMeters;
+
+float3 bufferColor = takeValueFromBufferC(ScreenRes, CloudParams, ScreenRes * (0.5f + centerToUv * 0.995), iTime, noiseTex, noiseTexSampler, pebbleTex, pebbleTexSampler).xyz; 
+float3 GammaColor = pow(vign * bufferColor, 1.0f / 2.2f) * ColorScale;
+return float4(GammaColor, 1.0f);

@@ -1,0 +1,679 @@
+#pragma once
+
+struct CloudScene
+{
+	float3 RayOrigin;
+	float3 SunDir;
+	float3 RayDir;
+};
+
+#define EPSILON_NRM (0.1 / 1080.0)
+
+// Cloud parameters
+#define  EARTH_RADIUS 6300000.0f
+#define  CLOUD_START 800.0
+#define  CLOUD_HEIGHT 600.0
+#define  SUN_POWER (float3(1.0,0.9,0.6) * 750.f)
+#define  LOW_SCATTER float3(1.0, 0.7, 0.5)
+
+// Ocean parameter
+// Procedural generation mostly from TDM https://www.shadertoy.com/view/Ms2SD1
+#define  ITER_GEOMETRY 3
+#define  ITER_FRAGMENT 5
+#define  SEA_HEIGHT 0.6
+#define  SEA_CHOPPY 4.0
+#define  SEA_FREQ 0.16
+#define  SEA_BASE (8.0 * float3(0.1,0.21,0.35))
+
+// Cube parameters
+#define CUBE_ALBEDO_COLOR float3(0.95, 0.16, 0.015)
+
+// Noise generation functions (by iq)
+float hash( float n )
+{
+    return frac(sin(n)*43758.5453);
+}
+
+float hash( float2 p ) 
+{
+    return frac(sin(dot(p,float2(127.1,311.7)))*43758.5453123);
+}
+
+float TexNoise( in float3 x, Texture2D noiseTex, SamplerState noiseTexSampler )
+{
+    float3 p = floor(x);
+    float3 f = frac(x);
+    f = f*f*(3.0-2.0*f);
+	float2 uv = (p.yz+float2(37.0,17.0)*p.x) + f.yz;
+	float2 rg = noiseTex.SampleLevel(noiseTexSampler, (uv + 0.5) / 512.0, 0.0).yx;
+	return lerp( rg.x, rg.y, f.y );
+}
+
+float noise( in float2 p ) 
+{
+    float2 i = floor( p );
+    float2 f = frac( p );	
+	f = f*f*(3.0-2.0*f);
+    return -1.0 + 2.0 * lerp( 
+							lerp( hash( i + float2(0.0,0.0) ), hash( i + float2(1.0,0.0) ), f.x),
+                			lerp( hash( i + float2(0.0,1.0) ), hash( i + float2(1.0,1.0) ), f.x), 
+						f.y);
+}
+
+float fbm( float3 p, Texture2D noiseTex, SamplerState noiseTexSampler )
+{
+    float3x3 m = 
+	{
+		0.00,  0.80,  0.60,
+		-0.80,  0.36, -0.48,
+		-0.60, -0.48,  0.64 
+	};    
+    float f = 0.5f * TexNoise(p , noiseTex, noiseTexSampler); 
+	p = mul(m, p) * 2.02f;
+
+    f += 0.250f * TexNoise(p , noiseTex, noiseTexSampler); 
+	p = mul(m, p) * 2.03f;
+
+    f += 0.125f * TexNoise(p , noiseTex, noiseTexSampler);
+    return f;
+}
+
+float intersectSphere(float3 origin, float3 dir, float3 spherePos, float sphereRad)
+{
+	float3 oc = origin - spherePos;
+	float b = 2.0 * dot(dir, oc);
+	float c = dot(oc, oc) - sphereRad * sphereRad;
+	float disc = b * b - 4.0 * c;
+	if (disc < 0.0)
+		return -1.0;    
+    float q = (-b + ((b < 0.0) ? -sqrt(disc) : sqrt(disc))) / 2.0;
+	float t0 = q;
+	float t1 = c / q;
+	if (t0 > t1)
+	{
+		float temp = t0;
+		t0 = t1;
+		t1 = temp;
+	}
+	if (t1 < 0.0)
+		return -1.0;
+    
+    return (t0 < 0.0) ? t1 : t0;
+}
+
+float clouds(float3 p, out float cloudHeight, bool fast, float iTime, Texture2D pebbleTex, SamplerState pebbleTexSampler, Texture2D noiseTex, SamplerState noiseTexSampler)
+{
+    float atmoHeight = length(p - float3(0.0, 0.0, -EARTH_RADIUS)) - EARTH_RADIUS;
+    cloudHeight = clamp((atmoHeight-CLOUD_START)/(CLOUD_HEIGHT), 0.0, 1.0);
+    p.x += iTime*10.3;
+    float largeWeather = clamp((pebbleTex.SampleLevel(pebbleTexSampler, -0.00005*p.xy, 0.0).x-0.18)*5.0, 0.0, 2.0);
+    p.y += iTime*8.3;
+    float weather = largeWeather*max(0.0, pebbleTex.SampleLevel(pebbleTexSampler, 0.0002*p.xy, 0.0).x-0.28)/0.72;
+    weather *= smoothstep(0.0, 0.5, cloudHeight) * smoothstep(1.0, 0.5, cloudHeight);
+    float cloudShape = pow(weather, 0.3+1.5*smoothstep(0.2, 0.5, cloudHeight));
+    if(cloudShape <= 0.0)
+        return 0.0;    
+    p.y += iTime*12.3;
+	float den= max(0.0, cloudShape-0.7*fbm(p*.01, noiseTex, noiseTexSampler));
+    if(den <= 0.0)
+        return 0.0;
+    
+    if(fast)
+    	return largeWeather*0.2*min(1.0, 5.0*den);
+
+    p.z += iTime*15.2;
+    den= max(0.0, den-0.2*fbm(p*0.05, noiseTex, noiseTexSampler));
+    return largeWeather*0.2*min(1.0, 5.0*den);
+}
+
+// From https://www.shadertoy.com/view/4sjBDG
+float numericalMieFit(float costh)
+{
+    // This function was optimized to minimize (delta*delta)/reference in order to capture
+    // the low intensity behavior.
+    float bestParams[10];
+    bestParams[0]=9.805233e-06;
+    bestParams[1]=-6.500000e+01;
+    bestParams[2]=-5.500000e+01;
+    bestParams[3]=8.194068e-01;
+    bestParams[4]=1.388198e-01;
+    bestParams[5]=-8.370334e+01;
+    bestParams[6]=7.810083e+00;
+    bestParams[7]=2.054747e-03;
+    bestParams[8]=2.600563e-02;
+    bestParams[9]=-4.552125e-12;
+    
+    float p1 = costh + bestParams[3];
+    float4 expValues = exp(float4(bestParams[1] *costh+bestParams[2], bestParams[5] *p1*p1, bestParams[6] *costh, bestParams[9] *costh));
+    float4 expValWeight= float4(bestParams[0], bestParams[4], bestParams[7], bestParams[8]);
+    return dot(expValues, expValWeight);
+}
+
+float lightRay(float3 p, float phaseFunction, float dC, float mu, float3 sun_direction, float cloudHeight, bool fast, float iTime, Texture2D pebbleTex, SamplerState pebbleTexSampler, Texture2D noiseTex, SamplerState noiseTexSampler)
+{
+    int nbSampleLight = fast ? 7 : 20;
+	float zMaxl         = 600.;
+    float stepL         = zMaxl/float(nbSampleLight);
+    
+    float lighRayDen = 0.0;    
+    p += sun_direction*stepL*hash(dot(p, float3(6.356, 12.256, 2.646)) + iTime);
+    for(int j=0; j<nbSampleLight; j++)
+    {
+        float cloudHeight;
+        lighRayDen += clouds( p + sun_direction*float(j)*stepL, cloudHeight, fast, iTime, pebbleTex, pebbleTexSampler, noiseTex, noiseTexSampler);
+    }    
+    if(fast)
+    {
+        return (0.5*exp(-0.4*stepL*lighRayDen) + max(0.0, -mu*0.6+0.3)*exp(-0.02*stepL*lighRayDen))*phaseFunction;
+    }
+    float scatterAmount = lerp(0.008, 1.0, smoothstep(0.96, 0.0, mu));
+    float beersLaw = exp(-stepL*lighRayDen)+0.5*scatterAmount*exp(-0.1*stepL*lighRayDen)+scatterAmount*0.4*exp(-0.02*stepL*lighRayDen);
+    return beersLaw * phaseFunction * lerp(0.05 + 1.5*pow(min(1.0, dC*8.5), 0.3+5.5*cloudHeight), 1.0, clamp(lighRayDen*0.4, 0.0, 1.0));
+}
+
+//@float3 pos, relative position from cube center
+//@float Thickness, Cube Face Thickness
+//@return float, Distance of pos From Cube's External Face
+float udRoundBox(float3 pos, float BoxEdgeLen, float Thickness)
+{
+	//Out Stretching Length From 3 Orthogonal Face
+	float3 OutStretchingPart = max(abs(pos) - BoxEdgeLen, 0.0);
+    return length(OutStretchingPart) - Thickness;
+}
+
+float3x3 cubeForm = 
+	{
+		1.0f, 0.0f, 0.0f,
+		0.0f, 1.0f, 0.0f,
+		0.0f, 0.0f, 1.0f
+	};
+
+float ZElevation = 0.0;
+//@return float, The Minimal Distance From Seven Cubes' External Distance
+//negative, means hitting with cube, otherwise, hitting miss
+float map( in float3 pos )
+{
+    pos = mul(cubeForm, pos);
+    pos.z += ZElevation;
+    
+    pos.z += 3.66;
+    pos.x += 0.4;
+    pos *= 0.35;
+        
+    float fBottomBoxCenterHeight = 1.25f;
+    float fCubeSpan = 0.33f;//Dist of Neighboring Cube Center
+	float BoxEdgeLen = 0.15f;//Cube Side Length
+	float Thickness = 0.01;
+	//seven cubes
+    float res = udRoundBox(  pos-float3(0.0, 0.0,fBottomBoxCenterHeight), BoxEdgeLen, Thickness );
+    res = min( res, udRoundBox(  pos-float3(0.0, fCubeSpan,fBottomBoxCenterHeight), BoxEdgeLen, Thickness ) );
+    res = min( res, udRoundBox(  pos-float3(fCubeSpan, fCubeSpan,fBottomBoxCenterHeight), BoxEdgeLen, Thickness ) );
+    res = min( res, udRoundBox(  pos-float3(fCubeSpan, 0.0,fBottomBoxCenterHeight), BoxEdgeLen, Thickness ) );
+    
+    res = min( res, udRoundBox(  pos-float3(0.0, 0.0,fBottomBoxCenterHeight + fCubeSpan), BoxEdgeLen, Thickness ) );
+    res = min( res, udRoundBox(  pos-float3(fCubeSpan, 0.0,fBottomBoxCenterHeight + fCubeSpan), BoxEdgeLen, Thickness ) );
+    res = min( res, udRoundBox(  pos-float3(0.0, fCubeSpan,fBottomBoxCenterHeight + fCubeSpan), BoxEdgeLen, Thickness ) ); 
+    return res;
+}
+
+float sea_octave(float2 uv, float choppy) 
+{
+    uv += noise(uv);        
+    float2 wv = 1.0-abs(sin(uv));
+    float2 swv = abs(cos(uv));    
+    wv = lerp(wv,swv,wv);
+    return pow(1.0-pow(wv.x * wv.y,0.65),choppy);
+}
+#define SEA_SPEED 0.8
+float mapWater(float3 p, int steps, bool cube, float iTime) 
+{
+    float freq = SEA_FREQ;
+    float amp = SEA_HEIGHT;
+    float choppy = SEA_CHOPPY;
+    float2 uv = p.yx; uv.x *= 0.75;
+    
+    float d, h = 0.0;
+    const float2x2 octave_m = 
+	{
+		1.6f, 1.2f,
+		-1.2f,1.6f
+	};
+    float seaTime = (1.0 + iTime * SEA_SPEED);
+    for(int i = 0; i < steps; i++)
+    {        
+    	d = sea_octave((uv+seaTime)*freq,choppy);
+    	d += sea_octave((uv-seaTime)*freq,choppy);
+        h += d * amp;        
+    	uv = mul(octave_m, uv);
+		freq *= 1.9; amp *= 0.22;
+        choppy = lerp(choppy,1.0,0.2);
+    }
+    if(!cube)
+        return p.z -h;
+    
+    return p.z - h - 0.2*exp(-max(0.0, 23.0*map(p)));
+}
+
+float Schlick (float f0, float VoH )
+{
+	return f0+(1.-f0)*pow(1.0-VoH,5.0);
+}
+
+#define ATM_START (EARTH_RADIUS + CLOUD_START)
+#define ATM_END (ATM_START + CLOUD_HEIGHT)
+float3 skyRay(float3 org, float3 dir, float3 sun_direction, bool fast, float iTime, Texture2D noiseTex, SamplerState noiseTexSampler, Texture2D pebbleTex, SamplerState pebbleTexSampler)
+{
+    int nbSample = fast ? 13 : 35;   
+    float3 color = 0.0f;
+	float distToAtmStart = intersectSphere(org, dir, float3(0.0, 0.0, -EARTH_RADIUS), ATM_START);
+    float distToAtmEnd = intersectSphere(org, dir, float3(0.0, 0.0, -EARTH_RADIUS), ATM_END);
+    float3 p = org + distToAtmStart * dir;    
+    float stepS = (distToAtmEnd-distToAtmStart) / float(nbSample);    
+    float T = 1.;    
+    float mu = dot(sun_direction, dir);
+    float phaseFunction = numericalMieFit(mu);
+    p += dir*stepS*hash(dot(dir, float3(6.356, 12.256, 2.646)) + iTime);
+    if(dir.z > 0.015)
+	{	
+		for(int i=0; i<nbSample; i++)
+		{        
+			float cloudHeight;
+			float density = clouds(p, cloudHeight, fast, iTime, pebbleTex, pebbleTexSampler, noiseTex, noiseTexSampler);
+			if(density>0.)
+			{
+				float intensity = lightRay(p, phaseFunction, density, mu, sun_direction, cloudHeight, fast, iTime, pebbleTex, pebbleTexSampler, noiseTex, noiseTexSampler);        
+				float3 ambient = (0.5f + 0.6f * cloudHeight) * float3(0.2, 0.5, 1.0) * 6.5f + 0.8f * max(0.0f, 1.0f - 2.0f * cloudHeight);
+				float3 radiance = ambient + SUN_POWER*intensity;
+				radiance*=density;			
+				color += T*(radiance - radiance * exp(-density * stepS)) / density;   // By Seb Hillaire                  
+				T *= exp(-density*stepS);            
+				if( T <= 0.05)
+					break;
+			}
+			p += dir*stepS;
+		}
+	}
+        
+    if(!fast)
+    {
+        float3 pC = org + intersectSphere(org, dir, float3(0.0, 0.0, -EARTH_RADIUS), ATM_END+1000.0)*dir;
+    	color += T * 3.0f * max(0.0f, fbm(float3(1.0f, 1.0f, 1.8f) * pC * 0.002f, noiseTex, noiseTexSampler) - 0.4f);
+    }
+	float3 background = 6.0f * lerp(float3(0.2f, 0.52f, 1.0f), float3(0.8f, 0.95f, 1.0f), pow(0.5f + 0.5f * mu, 15.0f)) + lerp(3.5f, 0.0f, min(1.0f, 2.3f * dir.z));
+    if(!fast) 	
+		background += T * 1e4 * smoothstep(0.9998f, 1.0f, mu);
+    color += background * T;
+    
+    return color;
+}
+
+float D_GGX(in float r, in float NoH, in float3 h)
+{
+    float a = NoH * r;
+    float k = r / ((1.0 - NoH * NoH) + a * a);
+    return k * k * (1.0 / PI);
+}
+
+//@return float, Positive, The Distance From Cubes
+float castRay( in float3 ro, in float3 rd, in float tmin)
+{
+    float tmax = 10.0;   
+    float maxZ = 3.0;
+    float minZ = -1.0;
+
+    // bounding volume
+    float tp1 = (minZ - ro.z) / rd.z; 
+	if( tp1 > 0.0 ) 
+		tmax = min( tmax, tp1 );
+
+    float tp2 = (maxZ - ro.z) / rd.z; 
+	if( tp2 > 0.0 ) 
+	{ 
+		if( ro.z > maxZ ) 
+			tmin = max( tmin, tp2 );
+		else           
+			tmax = min( tmax, tp2 ); 
+	}
+
+    float t = tmin;
+    for( int i = 0; i < 100; i++ )
+    {
+	    float precis = 0.0005 * t;
+		float3 RayMarchingPos = ro + rd * t;
+	    float MinDistFromCube = map(RayMarchingPos);//Minimal Distance From The Seven Cube's External Face
+		//Too Small Compared With RayMarching Distance
+        if( MinDistFromCube < precis || t > tmax ) 
+			break;
+        t += MinDistFromCube;//Marching Speeding
+    }
+
+    if( t > tmax ) 
+		return -1.;
+    return t;
+}
+
+//Calculate Cubes' Soft Shadow Factor According 
+float softshadow( in float3 ro, in float3 rd, in float mint, in float tmax )
+{
+	float SoftShadow = 1.0;
+    float t = mint;
+    for( int i = 0; i < 14; i++ )
+    {
+		float h = map(ro + rd * t);
+        SoftShadow = min( SoftShadow, 8.* h / t );
+        t += clamp( h, 0.08, 0.25 );
+        if( SoftShadow < 0.001 || t > tmax ) 
+			break;
+    }
+    return max(0.0, SoftShadow);
+}
+
+//@return float3, calculate normal of the minimal distance projection
+//position from @float3 pos to seven cubes' faces
+float3 calcNormal( in float3 pos)
+{
+    float2 e = float2(1.0,-1.0)*EPSILON_NRM;
+    return normalize( e.yxy*map(pos + e.yxy) + 
+					  e.xyy*map(pos + e.xyy) + 
+					  e.yyx*map(pos + e.yyx) + 
+					  e.xxx*map(pos + e.xxx) );
+}
+
+float calcAO( in float3 pos, in float3 nor )
+{
+	float sca = 10.2;
+    float hr = 0.05;  
+    float dd = map( nor * 0.15 + pos ); 
+    return clamp( 1.0 + (dd-hr)*sca, 0.0, 1.0 );     
+}
+
+float3 renderCubeFast(in float3 p, in float3 dir, in float3 sun_direction, in float res)
+{
+    float3 pos = p + res*dir;
+    float3 nor = calcNormal( pos );
+    float NoL = max(0.0, dot(sun_direction, nor));    
+    float3 color = 0.6 * NoL * SUN_POWER * CUBE_ALBEDO_COLOR / PI; // diffuse
+    //color *= softshadow(pos, sun_direction, 0.001, 2.0); // Shadow
+    color += CUBE_ALBEDO_COLOR * float3(0.3, 0.6, 1.0)* 35.0 * (0.75 + 0.25*nor.z); // skylight
+    return color;
+}
+
+float HenyeyGreenstein(float mu, float inG)
+{
+	return (1.-inG * inG)/(pow(1.+inG*inG - 2.0 * inG*mu, 1.5)*4.0* PI);
+}
+
+#define SEA_WATER_COLOR (0.6 * float3(0.8,0.9,0.6))
+float3 getSeaColor(in float3 p, in float3 N, in float3 sun_direction, in float3 dir, in float3 dist, in float mu, in float cloudShadow, float iTime, Texture2D noiseTex, SamplerState noiseTexSampler, Texture2D pebbleTex, SamplerState pebbleTexSampler)
+{    
+    float3 L = normalize(0.0f + reflect(dir, N));
+    float3 V = -dir;
+	float NoV = clamp(abs(dot(N, V)) + 1e-5f, 0.0f, 1.0);
+    float NoL = max(0.0f, dot(N, L));
+    float VoH = max(0.0f, dot(V, normalize(V+L)));    
+    float fresnel = Schlick(0.02f, NoV);    
+    float DistFromCube = castRay(p, L, 0.0001f);
+    float3 reflection = skyRay(p, L, sun_direction, true, iTime, noiseTex, noiseTexSampler, pebbleTex, pebbleTexSampler);
+    if(DistFromCube != -1.)
+        reflection = renderCubeFast(p, L, sun_direction, DistFromCube);    
+    float3 color = lerp(cloudShadow*SEA_BASE, reflection, fresnel);    
+    float subsurfaceAmount = 12.0*HenyeyGreenstein(mu, 0.5);
+    color += subsurfaceAmount * SEA_WATER_COLOR * max(0.0, 1.0+p.z - 0.6*SEA_HEIGHT);    
+    if(DistFromCube == -1.)
+    {
+    	float3 H = normalize(V+sun_direction);
+        float NoL = max(0.0, dot(N, sun_direction));
+        float roughness = 0.05;
+    	color += LOW_SCATTER*0.4*float3(NoL/PI*fresnel*SUN_POWER*D_GGX(roughness, max(0.0, dot(N, H)), H));
+    }
+    color += 9.0*max(0.0, smoothstep(0.35, 0.6, p.z - SEA_HEIGHT) * N.y); // Foam
+    float foamShadow = max(0.0, dot(sun_direction.xz, normalize(p.yx-float2(0.0, 0.0))));
+    color += foamShadow*2.5*smoothstep(0.06+0.06*N.x,0.0,map(p))*max(0.0, N.z); // Foam at cube entry
+    return color;
+}
+
+float3 getNormalWater(float3 p, float eps, float iTime) 
+{   
+    float3 n;
+    n.z = mapWater(p, ITER_FRAGMENT, true, iTime);    
+    n.y = mapWater(float3(p.x, p.y + eps, p.z), ITER_FRAGMENT, true, iTime) - n.z;
+    n.x = mapWater(float3(p.x+eps, p.y, p.z), ITER_FRAGMENT, true, iTime) - n.z;
+    n.z = eps;  
+    return normalize(n);
+}
+
+float heightMapTracing(float3 ori, float3 dir, out float3 p, float iTime) 
+{  
+    float tm = 0.0;
+    float tx = 1e8;    
+    float hx = mapWater(ori + dir * tx, ITER_GEOMETRY, true, iTime);
+    if(hx > 0.0) return tx;   
+    float hm = mapWater(ori + dir * tm, ITER_GEOMETRY, true, iTime);    
+    float tmid = 0.0;
+    for(int i = 0; i < 8; i++)
+    {
+        tmid = lerp(tm,tx, hm/(hm-hx));                   
+        p = ori + dir * tmid;                   
+    	float hmid = mapWater(p, ITER_GEOMETRY, true, iTime);
+		if(hmid < 0.0)
+        {
+        	tx = tmid;
+            hx = hmid;
+        } else
+        {
+            tm = tmid;
+            hm = hmid;
+        }
+    }
+    return tmid;
+}
+
+float3 worldReflection(float3 org, float3 dir, float3 sun_direction, float iTime, Texture2D noiseTex, SamplerState noiseTexSampler, Texture2D pebbleTex, SamplerState pebbleTexSampler)
+{    
+    if(castRay(org, dir, 0.05) != -1. || dir.z < 0.0)
+        return 0.0f;
+    
+    return skyRay(org, dir, sun_direction, true, iTime, noiseTex, noiseTexSampler, pebbleTex, pebbleTexSampler);
+}
+
+float3 renderCube(float3 p, float3 dir, float3 sun_direction, float DistFromCube, float iTime, Texture2D noiseTex, SamplerState noiseTexSampler, Texture2D pebbleTex, SamplerState pebbleTexSampler)
+{
+    float3 pos = p + DistFromCube * dir;//position approaching cubes
+    float3 nor = calcNormal(pos);
+    float occ = calcAO(pos, nor);
+    float NoL = max(0.0, dot(sun_direction, nor));
+    float sunShadow = softshadow(pos, sun_direction, 0.001, 2.0);
+    float3 color = 0.6 * NoL * SUN_POWER * CUBE_ALBEDO_COLOR * sunShadow / PI; // diffuse
+    color += CUBE_ALBEDO_COLOR * occ * float3(0.3, 0.6, 1.0) * 35.0 * (0.75 + 0.25 * nor.z); // skylight
+    color += Schlick(0.04, max(0.0, dot(nor, -dir))) * worldReflection(pos, reflect(dir, nor), sun_direction, iTime, noiseTex, noiseTexSampler, pebbleTex, pebbleTexSampler) * max(0.0, occ-0.7) / 0.7; // specular
+    return color;
+}
+
+#define EPS_EL 0.9
+void setupCubeForm(float iTime)
+{
+    float elevationX = mapWater(float3(EPS_EL, -EPS_EL, 0.0), 2, false, iTime);
+    float elevationY = mapWater(float3(0.0, EPS_EL, 0.0), 2, false, iTime);
+    float elevationZ = mapWater(float3(-EPS_EL, -EPS_EL, 0.0), 2, false, iTime);
+    
+    float waveRotX = elevationY - (elevationZ + elevationX) * 0.5;
+    float waveRotZ = ((elevationX - elevationY)+(elevationY - elevationZ))*0.5;
+    float2 euler = float2(0.3- waveRotZ, -0.15- waveRotX);    
+    float2 s = sin(euler);
+    float2 c = cos(euler);
+    
+    float3x3 rotY = {
+        c.x, 0.0, -s.x,
+        0.0, 1.0, 0.0,
+        s.x, 0.0, c.x
+	};
+      
+    float3x3 rotX = {
+		1.0, 0.0, 0.0,
+        0.0, c.x, s.x,
+        0.0, -s.x, c.x
+	};
+    
+    cubeForm = transpose(rotY*rotX); 
+    ZElevation = 0.333 * (elevationY + elevationZ + elevationX);
+}
+
+float4 takeValueFromBufferA( float2 ScreenRes, CloudScene CloudParam, float2 FragCoord, float iTime, Texture2D noiseTex, SamplerState noiseTexSampler, Texture2D pebbleTex, SamplerState pebbleTexSampler )
+{
+
+	float3 org = CloudParam.RayOrigin;
+    float3 dir = CloudParam.RayDir;
+
+	float3 color = 0.0f;
+    float3 sun_direction = CloudParam.SunDir;
+	float fogDistance = intersectSphere(org, dir, float3(0.0, 0.0, -EARTH_RADIUS), EARTH_RADIUS);
+    float mu = dot(sun_direction, dir);
+    
+    setupCubeForm(iTime);
+    float DistFromCube = castRay(org, dir, 2.0);
+    
+    // Sky
+    if(fogDistance == -1. && DistFromCube == -1.)
+    {
+        color = skyRay(org, dir, sun_direction, false, iTime, noiseTex, noiseTexSampler, pebbleTex, pebbleTexSampler); 
+        fogDistance = intersectSphere(org, dir, float3(0.0, 0.0, -EARTH_RADIUS), EARTH_RADIUS + 160.0);
+    }
+    else if(fogDistance == -1. && DistFromCube != -1.)//cube
+    {
+        color.xyz = renderCube(org, dir, sun_direction, DistFromCube, iTime, noiseTex, noiseTexSampler, pebbleTex, pebbleTexSampler);
+        fogDistance = DistFromCube;
+    }
+    else // water
+    {
+        float3 waterHitPoint;
+    	heightMapTracing(org, dir, waterHitPoint, iTime);         
+    	float3 dist = waterHitPoint - org;
+    	float3 n = getNormalWater(waterHitPoint, dot(dist,dist) * EPSILON_NRM, iTime);
+        float cloudShadow = 1.0 - pebbleTex.SampleLevel(pebbleTexSampler, waterHitPoint.yx * 0.008 - float2(0.0, 0.03*iTime), 7.0).x;        
+   	 	color = getSeaColor(waterHitPoint,n,sun_direction,dir,dist, mu, cloudShadow, iTime, noiseTex, noiseTexSampler, pebbleTex, pebbleTexSampler); 
+        
+        if(DistFromCube != -1.)
+        {
+            float distT = length(dist);
+            if(DistFromCube > distT) // Under the water cube
+            {
+                float3 refr = refract(dir, n, 0.75);
+            	DistFromCube = castRay(waterHitPoint, refr, 0.001);            	
+                if(DistFromCube != -1.)
+                {
+                    float3 cube = renderCube(waterHitPoint, refr, sun_direction, DistFromCube, iTime, noiseTex, noiseTexSampler, pebbleTex, pebbleTexSampler); 
+        			float fresnel = 1.0 - Schlick(0.04, max(0.0, dot(n, -dir)));
+            		color.xyz += fresnel * (cube.xyz * float3(0.7, 0.8, 0.9) * exp(-0.01 * float3(60.0, 15.0, 1.0) * max(0.0, DistFromCube)) - SEA_BASE * cloudShadow);
+                }
+            }
+            else
+            {
+                color = renderCube(org, dir, sun_direction, DistFromCube, iTime, noiseTex, noiseTexSampler, pebbleTex, pebbleTexSampler);
+            }            
+            fogDistance = DistFromCube;
+        }
+    }  
+    
+    float fogPhase = 0.5 * HenyeyGreenstein(mu, 0.7) + 0.5 * HenyeyGreenstein(mu, -0.6);  
+	float3 FogColor = fogPhase * 0.1 * LOW_SCATTER * SUN_POWER + 10.0 * float3(0.55, 0.8, 1.0);
+	float LerpFactor = exp(-0.0003 * fogDistance);
+	float3 FinalColor = lerp(FogColor, color, LerpFactor);
+    return float4(FinalColor, 1.0);
+}
+
+// https://knarkowicz.wordpress.com/2016/01/06/aces-filmic-tone-mapping-curve/
+float3 tonemapACES( float3 x )
+{
+    float a = 2.51;
+    float b = 0.03;
+    float c = 2.43;
+    float d = 0.59;
+    float e = 0.14;
+    return (x*(a*x+b))/(x*(c*x+d)+e);
+}
+
+#define BLOOM_AMOUNT 0.05f
+float4 takeValueFromBufferB( float2 ScreenRes, CloudScene CloudParam, float2 FragCoord, float iTime, Texture2D noiseTex, SamplerState noiseTexSampler, Texture2D pebbleTex, SamplerState pebbleTexSampler )
+{
+	float2 ScreenUV = FragCoord.xy / ScreenRes.xy;    
+    float2 blurRadius = 20.0f / ScreenRes.xy;
+
+    float4 sum = 0.0f;
+    float NUM_SAMPLES = 20.f;
+    float phiOffset = hash(dot(FragCoord.xy, float2(1.12f, 2.251f)) + iTime);
+    for(float i = 0.; i < NUM_SAMPLES; i++)
+    {
+        float2 r = blurRadius * i / NUM_SAMPLES;
+        float phi = (i / NUM_SAMPLES + phiOffset) * 2.0f * 3.1415926f;
+        float2 uv = ScreenUV + float2(sin(phi), cos(phi))*r;
+        sum += pebbleTex.SampleLevel(pebbleTexSampler, uv, 0.0f);
+    }
+    sum.xyz = lerp(takeValueFromBufferA(ScreenRes, CloudParam, FragCoord, iTime, noiseTex, noiseTexSampler, pebbleTex, pebbleTexSampler).xyz, sum.xyz / NUM_SAMPLES, BLOOM_AMOUNT);
+    // Make it look as if some auto exposure magic is going on
+    float exposure = 0.06f * (1.0f + 0.2f * sin(0.5f * iTime) * sin(1.8f * iTime));
+	return float4(tonemapACES(exposure*sum.xyz), 1.0f);
+}
+
+
+
+float2 offsets[8] = 
+{ 
+	float2(-1,-1), float2(-1, 1), 
+	float2(1, -1), float2(1, 1), 
+	float2(1, 0), float2(0, -1), 
+	float2(0, 1), float2(-1, 0)
+};
+
+float3 RGBToYCoCg_Local( float3 RGB )
+{
+	float Y = dot(RGB, float3(  1, 2,  1 )) * 0.25;
+	float Co= dot(RGB, float3(  2, 0, -2 )) * 0.25 + ( 0.5 * 256.0/255.0 );
+	float Cg= dot(RGB, float3( -1, 2, -1 )) * 0.25 + ( 0.5 * 256.0/255.0 );
+	return float3(Y, Co, Cg);
+}
+
+float3 YCoCgToRGB_Local( float3 YCoCg )
+{
+	float Y= YCoCg.x;
+	float Co= YCoCg.y - ( 0.5 * 256.0 / 255.0 );
+	float Cg= YCoCg.z - ( 0.5 * 256.0 / 255.0 );
+	float R= Y + Co-Cg;
+	float G= Y + Cg;
+	float B= Y - Co-Cg;
+	return float3(R,G,B);
+}
+
+float4 takeValueFromBufferC( float2 ScreenRes, CloudScene CloudParam, float2 FragCoord, float iTime, Texture2D noiseTex, SamplerState noiseTexSampler, Texture2D pebbleTex, SamplerState pebbleTexSampler )
+{
+    float3 newYCoCg = RGBToYCoCg_Local(takeValueFromBufferA(ScreenRes, CloudParam, FragCoord, iTime, noiseTex, noiseTexSampler, pebbleTex, pebbleTexSampler).xyz);
+    float3 history = RGBToYCoCg_Local(takeValueFromBufferB(ScreenRes, CloudParam, FragCoord, iTime, noiseTex, noiseTexSampler, pebbleTex, pebbleTexSampler).xyz);
+    
+    float3 colorAvg = newYCoCg;
+    float3 colorVar = newYCoCg*newYCoCg;
+    
+    // Marco Salvi's Implementation (by Chris Wyman)
+    for(int i = 0; i < 8; i++)
+    {
+        float3 fetch = RGBToYCoCg_Local(takeValueFromBufferA(ScreenRes, CloudParam, FragCoord.xy + offsets[i], iTime, noiseTex, noiseTexSampler, pebbleTex, pebbleTexSampler).xyz);
+        colorAvg += fetch;
+        colorVar += fetch*fetch;
+    }
+    colorAvg /= 9.0;
+    colorVar /= 9.0;
+    float gColorBoxSigma = 0.75;
+	float3 sigma = sqrt(max(0.0f, colorVar - colorAvg*colorAvg));
+	float3 colorMin = colorAvg - gColorBoxSigma * sigma;
+	float3 colorMax = colorAvg + gColorBoxSigma * sigma;
+    
+    history = clamp(history, colorMin, colorMax);
+  
+	return float4(YCoCgToRGB_Local(lerp(newYCoCg, history, 0.95)), 1.0);
+}
+
+
+float EmptyFunction()
+{
+	return 1.0f;
+// return 1;
+// }
+// #include "/Shaders/VolumetricClouds/VolumetricCloudFunctions.ush"
