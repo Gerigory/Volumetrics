@@ -31,6 +31,8 @@ struct CloudScene
 	float3 BiTangent;//Y Direction Tangent
 	float3 SphereOrigin;
 	float3 RayOrigin;
+	float3 BrightColor;
+	float3 DarkColor;
 	float Debug;
 };
 

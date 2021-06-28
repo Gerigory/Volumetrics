@@ -51,9 +51,13 @@ Cloud.BiTangent = normalize(cross(RayDirection, xDir));
 Cloud.Tangent = normalize(cross(Cloud.BiTangent, RayDirection));
 Cloud.SphereOrigin = SphereOrigin;
 Cloud.RayOrigin = RayOrigin;
+Cloud.BrightColor = BrightCol;
+Cloud.DarkColor = DarkCol;
 Cloud.Debug = Debug;
 
-return CloudRendering(Cloud);
+float4 RayMarchingColor = CloudRendering(Cloud);
+RayMarchingColor.rgb = lerp(Cloud.DarkColor, Cloud.BrightColor, RayMarchingColor.rgb);
+return RayMarchingColor;
 
 
 // #include "/Shaders/VolumetricClouds/ZeroVolumetricCloudRender.ush"
